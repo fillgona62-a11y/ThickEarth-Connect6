@@ -228,8 +228,9 @@ Errors always look like `{"error":{"code":"...","message":"..."}}`.
 ## Tests
 
 ```bash
-npm test          # 44 cases
-npm run smoke     # starts a real server, plays a game, then checks export, analysis, stats and static assets
+npm test               # 67 cases, including a DOM-shimmed Settings render
+npm run test:browser   # optional: real headless Chrome/Edge render (skips if absent)
+npm run smoke          # starts a real server, plays a game, then checks export, analysis, stats and static assets
 ```
 
 `test/rules.test.mjs` covers six-in-a-row detection, the single opening stone, per-turn stone bookkeeping, rejection of moves after the game ends, and coordinate round-trips.
@@ -237,6 +238,8 @@ npm run smoke     # starts a real server, plays a game, then checks export, anal
 `test/ai.test.mjs` covers AI legality, determinism, and taking a six-in-a-row when it is available.
 `test/agent-seat.test.mjs` covers missing and forged tokens, cross-game isolation, `STALE_TURN` rejection, deadline fallback, an agent playing a full game, agent vs agent in arena, and seat validation per mode.
 `test/web.test.mjs` guards the front end: the Chinese and English key sets must match, every `t()`-referenced key must exist, no territory-era vocabulary (camping, recall, pass) may survive in a view, and the board must be 19x19 with star points and a winning-line highlight.
+`test/view-smoke.test.mjs` renders the Settings page in a zero-dependency DOM shim as a signed-in administrator; it catches render-time `ReferenceError`s (the kind that once blanked the whole page) which backend tests cannot see.
+`test/admin-shared-llm.test.mjs` covers server-granted admin identity, 403 for non-admins, and the shared-LLM switch persisting across restarts.
 
 ---
 

@@ -14,6 +14,7 @@
     "start": "node server/index.js",
     "test": "node --test",
     "test:i18n": "node scripts/check-i18n.mjs",
+    "test:browser": "node scripts/browser-smoke.mjs",
     "smoke": "node scripts/smoke.mjs",
     "agent:example": "node agents/example-client.mjs",
     "agent:attach": "node agents/attach-agent.mjs",

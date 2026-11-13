@@ -228,8 +228,9 @@ node agents/attach-agent.mjs <gameId> <token> http://127.0.0.1:7788
 ## 测试
 
 ```bash
-npm test          # 测试与安全回归
-npm run smoke     # 起真服务跑一局，再校核导出、分析、统计与静态资源
+npm test               # 67 项，含 DOM shim 渲染设置页
+npm run test:browser   # 可选：用真实无头 Chrome/Edge 渲染，没装浏览器则跳过
+npm run smoke          # 起真服务跑一局，再校核导出、分析、统计与静态资源
 ```
 
 `test/rules.test.mjs` 覆盖连六判定、首手一子、回合内两子记账、终局后拒绝落子、坐标往返。
@@ -237,6 +238,8 @@ npm run smoke     # 起真服务跑一局，再校核导出、分析、统计与
 `test/ai.test.mjs` 覆盖 AI 合法性、确定性、能抓住连六机会。
 `test/agent-seat.test.mjs` 覆盖令牌缺失/伪造/跨局隔离、`STALE_TURN` 拦截、超时兜底、Agent 打完整一局、arena 双 Agent、各模式座位组合校验。
 `test/web.test.mjs` 是前端守卫：中英文案键必须一一对应、`t()` 引用的键必须存在、视图里不能残留扎营/召回/弃权词汇、棋盘必须是 19 路且带星位与获胜连线。
+`test/view-smoke.test.mjs` 用零依赖的 DOM shim 以管理员身份渲染设置页，专门抓后端测试看不到的渲染期 `ReferenceError`（曾导致整页白屏的那类）。
+`test/admin-shared-llm.test.mjs` 覆盖服务端授予的管理员身份、非管理员 403、共享开关跨重启持久化。
 
 ---
 
