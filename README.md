@@ -53,8 +53,19 @@ The rules engine is a pure module (`shared/rules.js`). The replay view imports t
 
 ## Quick start
 
+Getting a copy is the whole "install" — nothing is compiled or generated:
+
 ```bash
-# 1. Install Node 22.5+ and run. There is no npm install step, because there are no dependencies.
+git clone https://github.com/fillgona62-a11y/ThickEarth-Connect6.git
+cd ThickEarth-Connect6
+```
+
+No Git? Open the repo page, click the green **Code** button, choose **Download ZIP**, then unzip it. On Windows you can double-click `start.bat` instead of typing anything: it checks that Node is on `PATH`, starts the server on port 8787, and opens the browser.
+
+Then, with Node 22.5 or newer:
+
+```bash
+# 1. Run it. There is no npm install step, because there are no dependencies.
 npm start                        # desktop mode: 127.0.0.1, random port
 
 # 2. Web mode (registration and login, good for demos and deployment)
@@ -78,7 +89,7 @@ Environment variables:
 | `COOKIE_SECURE` | Set to 1 when the web deployment is behind HTTPS |
 | `THICK_EARTH_AI_MOCK` | Set to 1 to use the built-in mock provider, so the AI flow can be demoed offline |
 
-There is also an Electron shell: `electron/main.js` starts the server in-process and then opens a window. Installers live in Releases.
+There is also an Electron shell: `electron/main.js` starts the server in-process and then opens a window. Note that this repository ships no packaged installer, and Electron is not a dependency here — the shell only runs if you install Electron yourself (`npx electron .`). Running `npm start` and opening the printed URL needs nothing but Node.
 
 ### Updating an installed desktop build
 

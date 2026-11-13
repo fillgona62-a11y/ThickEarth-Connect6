@@ -53,8 +53,19 @@ npm start          # 桌面模式，127.0.0.1 随机端口
 
 ## 快速开始
 
+拿到代码就等于装好了——没有任何编译或生成步骤：
+
 ```bash
-# 1. 装 Node 22.5+ 后直接跑，无 npm install 步骤（没有依赖）
+git clone https://github.com/fillgona62-a11y/ThickEarth-Connect6.git
+cd ThickEarth-Connect6
+```
+
+没装 Git？打开仓库页面，点绿色的 **Code** 按钮选 **Download ZIP**，解压即可。Windows 上可以直接双击 `start.bat`，不用敲命令：它会先检查 Node 是否在 `PATH` 里，然后在 8787 端口起服务并打开浏览器。
+
+之后，需要 Node 22.5 或更新版本：
+
+```bash
+# 1. 直接跑，无 npm install 步骤（没有依赖）
 npm start                        # 桌面模式：127.0.0.1:随机端口
 
 # 2. Web 模式（有注册/登录，适合演示和部署）
@@ -78,7 +89,7 @@ npm run test:i18n                # 中英文案键一致性
 | `COOKIE_SECURE` | Web 模式走 HTTPS 时设为 1 |
 | `THICK_EARTH_AI_MOCK` | 设为 1 时用内置 mock 提供方，不联网也能演示 AI 流程 |
 
-桌面版另有 Electron 外壳：`electron/main.js` 起同进程内服务再开窗口，安装包在 Releases。
+桌面版另有 Electron 外壳：`electron/main.js` 起同进程内服务再开窗口。注意仓库不附带安装包，Electron 也不是本仓库的依赖——想用外壳得自己装 Electron（`npx electron .`）；`npm start` 再打开打印出来的地址则只要 Node 就行。
 
 ### 更新已安装的桌面版
 
