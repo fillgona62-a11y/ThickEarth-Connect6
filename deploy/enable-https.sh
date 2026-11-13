@@ -69,13 +69,15 @@ ls -l "$CERT/fullchain.pem" "$CERT/privkey.pem"
 
 log "Install HTTPS config"
 cat > "$CONF" <<NGINX
+# Always redirect to the canonical name. Using \$host here would send visitors
+# who typed the bare IP to https://<ip>, which the certificate does not cover.
 server {
-    listen 80;
-    listen [::]:80;
-    server_name $DOMAIN www.$DOMAIN;
+    listen 80 default_server;
+    listen [::]:80 default_server;
+    server_name _;
 
     location /.well-known/acme-challenge/ { root $WEBROOT; }
-    location / { return 301 https://\$host\$request_uri; }
+    location / { return 301 https://$DOMAIN\$request_uri; }
 }
 
 server {
@@ -87,6 +89,12 @@ server {
     ssl_certificate     $CERT/fullchain.pem;
     ssl_certificate_key $CERT/privkey.pem;
     ssl_protocols       TLSv1.2 TLSv1.3;
+
+    # PUBLIC_ORIGIN names only the apex, so www must not be allowed to issue
+    # state-changing requests from a different origin.
+    if (\$host = www.$DOMAIN) {
+        return 301 https://$DOMAIN\$request_uri;
+    }
 
     add_header X-Content-Type-Options nosniff always;
     add_header Referrer-Policy same-origin always;
@@ -116,9 +124,14 @@ systemctl daemon-reload
 systemctl restart thickearth
 nginx -t && systemctl reload nginx
 
+log "Certificate renewal"
+systemctl enable --now certbot-renew.timer 2>/dev/null || {
+  (crontab -l 2>/dev/null; echo "17 3 * * * /usr/bin/certbot renew --quiet --deploy-hook 'systemctl reload nginx'") | crontab -
+  systemctl enable --now crond 2>/dev/null || true
+}
+
 log "Verify"
 sleep 2
 curl -fsS --resolve "$DOMAIN:443:127.0.0.1" "https://$DOMAIN/api/config" | head -c 220
 printf '\n\nDone: https://%s\n' "$DOMAIN"
-echo "Reminder: allow TCP 443 in the cloud security group, and enable renewal:"
-echo "  systemctl enable --now certbot-renew.timer"
+echo "Renewal: systemctl status certbot-renew.timer"
