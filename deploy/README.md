@@ -134,3 +134,23 @@ Until the filing is approved, serve the app by IP over plain HTTP with
 A certificate issued by `certbot` on the host will NOT appear in the cloud
 provider's "SSL certificates" console — that console only lists certificates
 managed or uploaded through the provider's own certificate service.
+
+## Let other players use your LLM without sharing a key
+
+By default each account needs its own AI provider settings. To let anyone who
+registers pick an `LLM` seat immediately, enable the server-wide provider:
+
+```bash
+# In /etc/systemd/system/thickearth.service, add under [Service]:
+Environment=AI_SHARED_LLM=1
+# Optional: pin the source account instead of auto-selecting the earliest
+# configured row: Environment=AI_SHARED_USER_ID=user_xxxx
+sudo systemctl daemon-reload && sudo systemctl restart thickearth
+```
+
+Personal settings always take priority; only accounts with no usable
+configuration borrow the shared one. The shared key is read from the encrypted
+`ai_settings` row — no plaintext credential is added to the unit file, and the
+key never reaches the browser. All borrowed calls are charged to the source
+account's per-game and monthly caps, so consider raising `monthlyCallLimit` in
+Settings if several people will play.

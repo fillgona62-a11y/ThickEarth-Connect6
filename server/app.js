@@ -509,7 +509,10 @@ export function createApplication(options = {}) {
 
   function handleGetAiSettings(ctx) {
     const user = requireUser(ctx);
-    sendJson(ctx.res, 200, aiSettings.safeView(user.id));
+    sendJson(ctx.res, 200, {
+      ...aiSettings.safeView(user.id),
+      sharedAvailable: aiSettings.sharedAvailable?.() ?? false
+    });
   }
 
   async function handleUpdateAiSettings(ctx) {

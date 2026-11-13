@@ -99,7 +99,8 @@ export function createGameService({
     const usesLlm = seats.some((seat) => seat.kind === "ai" && seat.engine === "llm");
     if (!usesLlm) return;
     const stored = aiSettings?.getStored(user.id);
-    if (!stored || !aiSettings.isConfigured(stored)) {
+    const ownProvider = stored && aiSettings.isConfigured(stored);
+    if (!ownProvider && !aiSettings?.sharedAvailable?.()) {
       throw new HttpError(400, "AI_NOT_CONFIGURED", "Configure an AI provider before using LLM seats.");
     }
   }
@@ -270,15 +271,17 @@ export function createGameService({
     });
   }
 
-  function llmCallContext(row, settings) {
-    const ownerId = row.ownerUserId;
+  function llmCallContext(row, settings, billingUserId) {
+    // Shared-provider calls are charged to the account that supplied the key,
+    // not to whichever player happened to open the game.
+    const chargedTo = billingUserId ?? row.ownerUserId;
     const beforeCall = () => {
-      const gameCalls = repositories.countAiUsage(ownerId, row.id, "move");
+      const gameCalls = repositories.countAiUsage(chargedTo, row.id, "move");
       if (gameCalls >= settings.maxMovesPerGame) {
         logger?.warn?.("The LLM move budget for game " + row.id + " is used up; using the local engine.");
         return false;
       }
-      const month = repositories.sumAiUsageSince(ownerId, aiSettings.startOfMonth(now()));
+      const month = repositories.sumAiUsageSince(chargedTo, aiSettings.startOfMonth(now()));
       if (month.calls >= settings.monthlyCallLimit) {
         logger?.warn?.("The monthly AI call limit is reached; using the local engine.");
         return false;
@@ -287,7 +290,7 @@ export function createGameService({
     };
     const onProviderCall = (completion) => {
       aiSettings.recordUsage({
-        userId: ownerId,
+        userId: chargedTo,
         gameId: row.id,
         kind: "move",
         provider: settings.provider,
@@ -300,10 +303,20 @@ export function createGameService({
   }
 
   function llmProviderFor(ownerId) {
-    const settings = aiSettings.getForMove(ownerId);
+    // Personal settings win. Only when that player has none do we borrow the
+    // server-wide provider; A (bring your own key) and C (shared) coexist.
+    let settings = aiSettings.getForMove(ownerId);
+    let billingUserId = ownerId;
+    if (!settings) {
+      const shared = aiSettings.getSharedForMove?.();
+      if (shared) {
+        settings = shared.settings;
+        billingUserId = shared.userId;
+      }
+    }
     if (!settings) return null;
     try {
-      return { settings, provider: providerFactory(settings) };
+      return { settings, provider: providerFactory(settings), billingUserId };
     } catch (error) {
       logger?.warn?.("The LLM provider could not be created; using the local engine. (" + (error?.message ?? error) + ")");
       return null;
@@ -318,7 +331,7 @@ export function createGameService({
       const result = await llmEngine.choose(state, {
         seat,
         provider: resolved.provider,
-        ...llmCallContext(row, resolved.settings)
+        ...llmCallContext(row, resolved.settings, resolved.billingUserId)
       });
       return result?.action ?? null;
     } catch (error) {
@@ -336,7 +349,7 @@ export function createGameService({
       const actions = await llmEngine.chooseTurn(state, {
         seat,
         provider: resolved.provider,
-        ...llmCallContext(row, resolved.settings)
+        ...llmCallContext(row, resolved.settings, resolved.billingUserId)
       });
       return actions.length > 0 ? actions : null;
     } catch (error) {

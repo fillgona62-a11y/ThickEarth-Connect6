@@ -162,7 +162,9 @@ The local AI is scored on exactly that — run length × open ends along four ax
 
 The API key goes in Settings → AI provider, which supports DeepSeek, Alibaba Bailian, Zhipu, SiliconFlow, OpenAI and custom OpenAI-compatible endpoints. Note that filling in a key is not enough: the seat's engine also has to be set to `LLM` when the game is created.
 
-An LLM seat makes one request per stone by default, with a cap of 40 per game and 500 per month; beyond that it degrades to the local engine automatically.
+An LLM seat makes one request for **both stones of a turn**, with a hard 2.5 s timeout (`THICK_EARTH_LLM_MOVE_TIMEOUT_MS`) and caps of 40 per game / 500 per month. A late, empty or malformed reply falls back to the local AI at once — responsiveness is deliberately prioritised over playing strength. On DeepSeek, move calls disable thinking mode, which is on by default and otherwise consumes the whole output budget on reasoning.
+
+**Shared LLM on a server (optional).** AI settings are per account: a player who has not entered a key normally cannot create an LLM seat. Set `AI_SHARED_LLM=1` on the server to opt in to a server-wide provider. Personal settings always win; only players without a usable configuration borrow the shared one, so bring-your-own-key keeps working unchanged. The shared credential is read from the encrypted row of the earliest configured account (or pin one with `AI_SHARED_USER_ID=<id>`), is never returned to the browser, and every borrowed call is charged to that account's per-game and monthly caps.
 
 **Does a cloud LLM know the rules?** Yes, but only for seats using the `LLM` engine. The rules are not something the model has to remember: for every move the server rebuilds the prompt from the rules summary, the current board, how many stones are still owed this turn and every legal point, then parses the returned coordinate strictly. A parse failure or an illegal coordinate triggers one retry, and then a fallback to the local AI — so whether or not the model remembers Connect6, the legality of the game is never at its mercy.
 

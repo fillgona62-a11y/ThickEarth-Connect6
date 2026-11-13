@@ -179,7 +179,30 @@ function defaultSettings(userId, now) {
   };
 }
 
-export function createAiSettingsService({ repositories, secretStore, mode = "desktop", logger = null, now = Date.now } = {}) {
+export function createAiSettingsService({ repositories, secretStore, mode = "desktop", logger = null, now = Date.now, env = process.env } = {}) {
+  // Optional server-wide provider. When enabled, a player with no AI settings of
+  // their own borrows this account's provider for LLM seats. The key is still
+  // read from the encrypted row — no plaintext credential is stored anywhere.
+  const sharedEnabled = ["1", "true", "yes"].includes(String(env.AI_SHARED_LLM ?? "").toLowerCase());
+
+  function sharedUserId() {
+    if (!sharedEnabled) return null;
+    const explicit = String(env.AI_SHARED_USER_ID ?? "").trim();
+    return explicit || (repositories.firstConfiguredAiSettingsUserId?.() ?? null);
+  }
+
+  function sharedAvailable() {
+    const id = sharedUserId();
+    return id ? isConfigured(getStored(id)) : false;
+  }
+
+  function getSharedForMove() {
+    const id = sharedUserId();
+    if (!id) return null;
+    const settings = getForMove(id);
+    return settings ? { userId: id, settings } : null;
+  }
+
   function getStored(userId) {
     return repositories.getAiSettings(userId) ?? defaultSettings(userId, now());
   }
@@ -379,6 +402,8 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     resolveForUse,
     resolveTestCandidate,
     getForMove,
+    sharedAvailable,
+    getSharedForMove,
     assertQuota,
     monthUsage,
     coachConfig,

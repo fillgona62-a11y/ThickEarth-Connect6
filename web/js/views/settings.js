@@ -537,6 +537,9 @@ export async function mount(container, route) {
     }
     return h('div', { class: 'ai-settings' },
       aiStatusRow(),
+      settings.sharedAvailable
+        ? h('p', { class: 'muted', style: { margin: '0 0 12px', fontSize: '12px' } }, t('settingsAi.sharedNote'))
+        : null,
       h('div', { class: 'ai-enable-row' },
         toggle({
           label: t('settingsAi.enabled'),

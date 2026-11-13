@@ -640,6 +640,7 @@ export const DICT = {
 
     'setup.engineLabel': 'AI 引擎',
     'setup.engineLlmDisabled': 'LLM 未配置',
+    'setup.engineShared': '未配置个人 AI 服务，LLM 席位将使用服务器共享的模型。',
     'setup.engineHint': 'LLM 请求失败或达到每局上限时会自动回退本地引擎。',
     'setup.engineNotConfigured': '尚未配置 AI 服务，LLM 席位不可用。',
     'setup.engineConfigure': '前往设置',
@@ -669,6 +670,7 @@ export const DICT = {
     'settingsAi.temperatureHint': '0–2，越低输出越稳定。',
     'settingsAi.rangeHint': '范围 {min}–{max}',
     'settingsAi.fieldRange': '{field}需在 {min}–{max} 之间。',
+    'settingsAi.sharedNote': '本服务器提供共享 LLM：未配置个人 AI 服务的玩家也可以使用 LLM 席位，调用计入你的额度。',
     'settingsAi.maxOutputTokens': '最大输出 Tokens',
     'settingsAi.maxMovesPerGame': '每局 LLM 落子上限',
     'settingsAi.monthlyCallLimit': '每月调用上限',
@@ -1388,6 +1390,7 @@ export const DICT = {
 
     'setup.engineLabel': 'AI engine',
     'setup.engineLlmDisabled': 'LLM not configured',
+    'setup.engineShared': 'No personal AI provider is configured; LLM seats will use the server-shared model.',
     'setup.engineHint': 'LLM seats fall back to the local engine on provider errors or when the per-game cap is reached.',
     'setup.engineNotConfigured': 'No AI provider configured yet, so LLM seats are unavailable.',
     'setup.engineConfigure': 'Open settings',
@@ -1417,6 +1420,7 @@ export const DICT = {
     'settingsAi.temperatureHint': '0–2; lower values are more deterministic.',
     'settingsAi.rangeHint': 'Range {min}–{max}',
     'settingsAi.fieldRange': '{field} must be between {min} and {max}.',
+    'settingsAi.sharedNote': 'This server offers a shared LLM: players without their own AI settings can use LLM seats, and those calls count against your quota.',
     'settingsAi.maxOutputTokens': 'Max output tokens',
     'settingsAi.maxMovesPerGame': 'LLM moves per game',
     'settingsAi.monthlyCallLimit': 'Monthly call limit',

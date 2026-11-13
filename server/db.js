@@ -308,6 +308,10 @@ export function createRepositories(db) {
     ),
 
     getAiSettings: db.prepare("SELECT * FROM ai_settings WHERE user_id = ?"),
+    firstConfiguredAiSettings: db.prepare(
+      "SELECT user_id FROM ai_settings WHERE enabled = 1 AND api_key_encrypted IS NOT NULL " +
+      "AND base_url <> '' AND model <> '' ORDER BY created_at ASC LIMIT 1"
+    ),
     upsertAiSettings: db.prepare(
       "INSERT INTO ai_settings (user_id, enabled, provider, base_url, model, api_key_encrypted, key_hint, temperature, max_output_tokens, max_moves_per_game, monthly_call_limit, created_at, updated_at) " +
       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) " +
@@ -461,6 +465,9 @@ export function createRepositories(db) {
 
     getAiSettings(userId) {
       return mapAiSettingsRow(statements.getAiSettings.get(userId));
+    },
+    firstConfiguredAiSettingsUserId() {
+      return statements.firstConfiguredAiSettings.get()?.user_id ?? null;
     },
     upsertAiSettings(settings) {
       statements.upsertAiSettings.run(

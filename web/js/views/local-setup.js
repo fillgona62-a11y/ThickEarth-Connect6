@@ -112,6 +112,7 @@ export async function mount(container, route) {
   const aiConfig = {
     available: Boolean(session.features && session.features.llm),
     configured: false,
+    sharedAvailable: false,
     loading: Boolean(session.features && session.features.llm),
     error: ''
   };
@@ -126,14 +127,16 @@ export async function mount(container, route) {
       const data = await api.aiSettings();
       if (disposed) return;
       aiConfig.configured = Boolean(data && data.configured);
+      aiConfig.sharedAvailable = Boolean(data && data.sharedAvailable);
       aiConfig.error = '';
     } catch (error) {
       if (disposed) return;
       aiConfig.configured = false;
+      aiConfig.sharedAvailable = false;
       aiConfig.error = describeError(error);
     }
     aiConfig.loading = false;
-    if (!aiConfig.configured) {
+    if (!aiConfig.configured && !aiConfig.sharedAvailable) {
       let changed = false;
       state.seats.forEach((seat) => {
         if (seat.engine === 'llm') {
@@ -183,7 +186,7 @@ export async function mount(container, route) {
       if (!seats.some((seat) => seat.kind === 'agent')) return t('setup.validationArena');
     }
     if (seats.some((seat) => seat.kind === 'ai' && seat.engine === 'llm')) {
-      if (!aiConfig.available || !aiConfig.configured) return t('setup.validationLlm');
+      if (!aiConfig.available || (!aiConfig.configured && !aiConfig.sharedAvailable)) return t('setup.validationLlm');
     }
     return '';
   }
@@ -305,7 +308,7 @@ export async function mount(container, route) {
           }, t('kind.' + value)))
         );
 
-    const engineAvailable = aiConfig.available && aiConfig.configured && !aiConfig.loading;
+    const engineAvailable = aiConfig.available && (aiConfig.configured || aiConfig.sharedAvailable) && !aiConfig.loading;
     const engine = seat.engine === 'llm' && engineAvailable ? 'llm' : 'local';
 
     const engineField = isAi
@@ -380,8 +383,11 @@ export async function mount(container, route) {
     } else if (aiConfig.loading) {
       text = t('common.loading');
       tone = 'notice';
-    } else if (!aiConfig.configured) {
+    } else if (!aiConfig.configured && !aiConfig.sharedAvailable) {
       text = t('setup.engineNotConfigured');
+    } else if (!aiConfig.configured) {
+      text = t('setup.engineShared');
+      tone = 'notice';
     } else {
       return null;
     }
