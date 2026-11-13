@@ -37,6 +37,18 @@ const AI_DEFAULTS = {
   monthlyCallLimit: '500'
 };
 
+/**
+ * Bounds for the numeric AI fields, shared by the inputs and by save-time
+ * validation. They are intentionally tighter than the server's own limits: the
+ * server is a backstop, the form is what people actually look at.
+ */
+const NUMBER_FIELDS = [
+  { key: 'temperature', label: 'settingsAi.temperature', min: 0, max: 2, step: 0.05, integer: false, hintKey: 'settingsAi.temperatureHint' },
+  { key: 'maxOutputTokens', label: 'settingsAi.maxOutputTokens', min: 64, max: 16384, step: 64, integer: true },
+  { key: 'maxMovesPerGame', label: 'settingsAi.maxMovesPerGame', min: 0, max: 200, step: 1, integer: true },
+  { key: 'monthlyCallLimit', label: 'settingsAi.monthlyCallLimit', min: 0, max: 1000000, step: 1, integer: true }
+];
+
 function readMotion() {
   try {
     return window.localStorage.getItem(MOTION_KEY) === 'reduced';
@@ -135,6 +147,21 @@ export async function mount(container, route) {
 
   async function saveAiSettings() {
     if (aiState.saving) return;
+    // Validate here so a typo comes back as "Max output tokens: 64–16384" in the
+    // reader's language instead of a raw English 400 from the server.
+    for (const spec of NUMBER_FIELDS) {
+      const raw = String(aiForm[spec.key] ?? '').trim();
+      if (raw === '') continue;
+      const value = Number(raw);
+      const valid = Number.isFinite(value) && value >= spec.min && value <= spec.max
+        && (!spec.integer || Number.isInteger(value));
+      if (!valid) {
+        aiState.error = t('settingsAi.saveError') + ' · '
+          + t('settingsAi.fieldRange', { field: t(spec.label), min: spec.min, max: spec.max });
+        render();
+        return;
+      }
+    }
     aiState.saving = true;
     aiState.error = '';
     aiState.saveMessage = '';
@@ -417,20 +444,22 @@ export async function mount(container, route) {
       oninput: (event) => { aiForm.apiKey = event.target.value; }
     });
 
-    const numberField = (key, label, options) => field({
-      label: label,
+    const numberField = (spec) => field({
+      label: t(spec.label),
       control: h('input', {
         class: 'input',
         type: 'number',
-        min: String(options.min),
-        max: String(options.max),
-        step: String(options.step),
-        value: aiForm[key],
-        id: 'ai-' + key,
+        min: String(spec.min),
+        max: String(spec.max),
+        step: String(spec.step),
+        value: aiForm[spec.key],
+        id: 'ai-' + spec.key,
         disabled: disabled ? '' : null,
-        oninput: (event) => { aiForm[key] = event.target.value; }
+        oninput: (event) => { aiForm[spec.key] = event.target.value; }
       }),
-      hint: options.hint
+      hint: [spec.hintKey ? t(spec.hintKey) : '', t('settingsAi.rangeHint', { min: spec.min, max: spec.max })]
+        .filter(Boolean)
+        .join(' · ')
     });
 
     return h('div', { class: 'ai-form-grid' },
@@ -442,10 +471,7 @@ export async function mount(container, route) {
       h('div', { style: { gridColumn: '1 / -1' } },
         field({ label: t('settingsAi.apiKey'), control: keyInput, hint: t('settingsAi.keyWriteOnly') })
       ),
-      numberField('temperature', t('settingsAi.temperature'), { min: 0, max: 2, step: 0.05, hint: t('settingsAi.temperatureHint') }),
-      numberField('maxOutputTokens', t('settingsAi.maxOutputTokens'), { min: 64, max: 16384, step: 64, hint: '' }),
-      numberField('maxMovesPerGame', t('settingsAi.maxMovesPerGame'), { min: 0, max: 200, step: 1, hint: '' }),
-      numberField('monthlyCallLimit', t('settingsAi.monthlyCallLimit'), { min: 0, max: 1000000, step: 1, hint: '' })
+      ...NUMBER_FIELDS.map(numberField)
     );
   }
 
