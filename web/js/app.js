@@ -81,7 +81,8 @@ const NAV_ITEMS = [
   { name: 'online', path: '/online', icon: 'globe' },
   { name: 'history', path: '/history', icon: 'history' },
   { name: 'playtest', path: '/playtest', icon: 'chart' },
-  { name: 'rules', path: '/rules', icon: 'book' }
+  { name: 'rules', path: '/rules', icon: 'book' },
+  { name: 'settings', path: '/settings', icon: 'settings' }
 ];
 
 let currentCleanup = null;
