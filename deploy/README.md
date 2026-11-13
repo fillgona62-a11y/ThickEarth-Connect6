@@ -55,6 +55,13 @@ Use `thickearth-http.service` and `nginx-http.conf` instead of the two files
 above. This is the case for a fresh VM whose security group exposes port 80 but
 has no certificate or registered domain.
 
+**Shortcut:** `install-orcaterm.sh` performs this whole section in one pass.
+Paste it into the cloud console's web terminal (OrcaTerm) and run as root; it
+is idempotent, auto-detects the public IP, and finishes with a self check.
+If the host cannot reach GitHub, upload `thickearth-deploy.tar.gz` (a checkout
+without `.git`) as `/root/thickearth-deploy.tar.gz` first — the script unpacks
+it instead of cloning.
+
 ```bash
 # Node 22 from NodeSource RPM (OpenCloudOS 9 uses dnf, not apt)
 curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
