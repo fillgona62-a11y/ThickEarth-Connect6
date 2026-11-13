@@ -335,7 +335,10 @@ export async function testConnection(settings, options = {}) {
         { role: "user", content: "Reply with the single word OK." }
       ];
   const startedAt = Date.now();
-  const completion = await provider.complete({ messages, kind: "test", maxTokens: 16, temperature: 0, mockContext: null });
+  // 16 tokens is not enough for providers that think before answering: the whole
+  // budget can go to reasoning, leaving `content` empty and the check failing
+  // even though the key and model are fine.
+  const completion = await provider.complete({ messages, kind: "test", maxTokens: 256, temperature: 0, mockContext: null });
   return {
     ok: true,
     latencyMs: Date.now() - startedAt,
