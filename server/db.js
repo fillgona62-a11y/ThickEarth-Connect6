@@ -155,6 +155,24 @@ const MIGRATIONS = [
         CREATE INDEX idx_ai_usage_requester_time ON ai_usage(requested_by_user_id, created_at);
       `);
     }
+  },
+  {
+    version: 4,
+    apply(db) {
+      // Idempotent: a rolled-back user_version must not make the migration
+      // fail on a column that is already there.
+      const columns = db.prepare("PRAGMA table_info(users)").all().map((row) => row.name);
+      if (!columns.includes("is_admin")) {
+        db.exec("ALTER TABLE users ADD COLUMN is_admin INTEGER NOT NULL DEFAULT 0;");
+      }
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS site_settings (
+          key TEXT PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at INTEGER NOT NULL
+        );
+      `);
+    }
   }
 ];
 
@@ -194,7 +212,8 @@ function mapUserRow(row) {
     email: row.email,
     displayName: row.display_name,
     passwordHash: row.password_hash,
-    createdAt: row.created_at
+    createdAt: row.created_at,
+    isAdmin: Boolean(row.is_admin)
   };
 }
 
@@ -293,6 +312,12 @@ export function createRepositories(db) {
     insertUser: db.prepare("INSERT INTO users (id, email, display_name, password_hash, created_at) VALUES (?, ?, ?, ?, ?)"),
     findUserByEmail: db.prepare("SELECT * FROM users WHERE email = ?"),
     findUserById: db.prepare("SELECT * FROM users WHERE id = ?"),
+    setUserAdmin: db.prepare("UPDATE users SET is_admin = ? WHERE id = ?"),
+    getSiteSetting: db.prepare("SELECT value FROM site_settings WHERE key = ?"),
+    setSiteSetting: db.prepare(
+      "INSERT INTO site_settings (key, value, updated_at) VALUES (?, ?, ?) " +
+      "ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+    ),
 
     insertSession: db.prepare("INSERT INTO sessions (token_hash, user_id, created_at, expires_at) VALUES (?, ?, ?, ?)"),
     findSession: db.prepare("SELECT * FROM sessions WHERE token_hash = ?"),
@@ -385,6 +410,15 @@ export function createRepositories(db) {
     },
     findUserById(id) {
       return mapUserRow(statements.findUserById.get(id));
+    },
+    setUserAdmin(userId, isAdmin) {
+      statements.setUserAdmin.run(isAdmin ? 1 : 0, userId);
+    },
+    getSiteSetting(key) {
+      return statements.getSiteSetting.get(key)?.value ?? null;
+    },
+    setSiteSetting(key, value, updatedAt) {
+      statements.setSiteSetting.run(key, String(value), updatedAt);
     },
 
     createSession(session) {

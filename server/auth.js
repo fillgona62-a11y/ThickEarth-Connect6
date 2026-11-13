@@ -92,7 +92,7 @@ function validateDisplayName(value) {
 }
 
 function publicUser(user) {
-  return { id: user.id, email: user.email, displayName: user.displayName, createdAt: user.createdAt };
+  return { id: user.id, email: user.email, displayName: user.displayName, createdAt: user.createdAt, isAdmin: Boolean(user.isAdmin) };
 }
 
 export function createAuthService({ repositories, sessionTtlMs = DEFAULT_SESSION_TTL_MS, logger = null } = {}) {

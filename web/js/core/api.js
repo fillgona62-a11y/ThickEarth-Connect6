@@ -200,6 +200,14 @@ export const api = {
     return request('/api/ai/settings');
   },
 
+  adminSharedLlm() {
+    return request('/api/admin/shared-llm');
+  },
+
+  setAdminSharedLlm(enabled) {
+    return request('/api/admin/shared-llm', { method: 'PUT', body: { enabled } });
+  },
+
   updateAiSettings(payload) {
     return request('/api/ai/settings', { method: 'PUT', body: payload });
   },

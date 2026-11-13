@@ -88,6 +88,16 @@ export function createApplication(options = {}) {
   const dbPath = options.dbPath ?? ":memory:";
   const db = openDatabase(dbPath);
   const repositories = createRepositories(db);
+  // Administrator identity is granted by server configuration, never by the
+  // registration endpoint. Idempotent: applied on every startup.
+  const adminEnv = options.env ?? process.env;
+  const adminId = String(adminEnv.ADMIN_USER_ID ?? "").trim();
+  const adminEmail = String(adminEnv.ADMIN_USER_EMAIL ?? "").trim().toLowerCase();
+  if (adminId) repositories.setUserAdmin(adminId, true);
+  else if (adminEmail) {
+    const admin = repositories.findUserByEmail(adminEmail);
+    if (admin) repositories.setUserAdmin(admin.id, true);
+  }
   const sessionTtlMs = options.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS;
   const bodyLimit = options.bodyLimit ?? DEFAULT_BODY_LIMIT;
   const secureCookies = options.secureCookies === undefined ? mode === "web" : Boolean(options.secureCookies);
@@ -192,6 +202,12 @@ export function createApplication(options = {}) {
   function requireUser(ctx) {
     if (!ctx.user) throw new HttpError(401, "UNAUTHENTICATED", "Sign in to continue.");
     return ctx.user;
+  }
+
+  function requireAdmin(ctx) {
+    const user = requireUser(ctx);
+    if (!user.isAdmin) throw new HttpError(403, "FORBIDDEN", "Administrator access required.");
+    return user;
   }
 
   function checkRate(limiter, key) {
@@ -553,6 +569,29 @@ export function createApplication(options = {}) {
     });
   }
 
+  function adminSharedView() {
+    return {
+      enabled: aiSettings.isSharedEnabled(),
+      available: aiSettings.sharedAvailable?.() ?? false
+    };
+  }
+
+  function handleGetAdminShared(ctx) {
+    requireAdmin(ctx);
+    sendJson(ctx.res, 200, adminSharedView());
+  }
+
+  async function handlePutAdminShared(ctx) {
+    const admin = requireAdmin(ctx);
+    const body = await readJsonBody(ctx.req, bodyLimit);
+    if (!body || typeof body !== "object" || typeof body.enabled !== "boolean") {
+      throw new HttpError(400, "INVALID_BODY", "enabled must be a boolean.");
+    }
+    aiSettings.setSharedEnabled(body.enabled);
+    logger?.info?.("Shared LLM " + (body.enabled ? "enabled" : "disabled") + " by " + admin.id + ".");
+    sendJson(ctx.res, 200, adminSharedView());
+  }
+
   async function handleUpdateAiSettings(ctx) {
     const user = requireUser(ctx);
     const body = await readJsonBody(ctx.req, bodyLimit);
@@ -657,6 +696,8 @@ export function createApplication(options = {}) {
   router.add("GET", "/api/games/:gameId/analysis", handleGetAnalysis);
   router.add("POST", "/api/games/:gameId/analysis", handleGenerateAnalysis);
   router.add("GET", "/api/ai/settings", handleGetAiSettings);
+  router.add("GET", "/api/admin/shared-llm", handleGetAdminShared);
+  router.add("PUT", "/api/admin/shared-llm", handlePutAdminShared);
   router.add("PUT", "/api/ai/settings", handleUpdateAiSettings);
   router.add("POST", "/api/ai/test", handleTestAiProvider);
   router.add("DELETE", "/api/ai/key", handleDeleteAiKey);

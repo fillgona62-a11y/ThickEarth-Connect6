@@ -85,3 +85,30 @@ npm run evaluate:agents
 ```
 
 新增测试使用临时数据库和模拟提供方，验证共享调用、个人优先、账号隔离、成本预占、SSRF、跨站防护、完整超时、在线开局及 Agent 令牌/SSE/截止时间。未消耗真实模型额度。真实提供方可用性及生产反向代理配置需在部署环境验证。
+
+## 管理员与网页开关
+
+共享 LLM 不再只能由 root 改配置文件。服务器在启动时把 `ADMIN_USER_EMAIL`（或
+`ADMIN_USER_ID`，两者同时存在时 ID 优先）指定的账号标记为管理员；这个标记存
+在 `users.is_admin`，**注册接口不接受也不允许提权**。
+
+管理员登录后在「设置 → 站点管理」会看到一个「共享 LLM」开关：
+
+- 开关状态存在 `site_settings` 表，**重启服务后保持**；环境变量
+  `AI_SHARED_LLM` 只作为全新数据库的初始值。
+- `GET /api/admin/shared-llm` 返回 `{ enabled, available }`；`available` 表示
+  共享源账号存在、已启用且 Key 可解密。
+- `PUT /api/admin/shared-llm` 接受 `{"enabled": true|false}`。两个接口都要求
+  管理员会话，普通账号返回 403，未登录返回 401。
+- 关闭后，没有个人配置的玩家创建 LLM 席位会收到 `AI_NOT_CONFIGURED`；开启后
+  恢复借用。个人配置始终优先，不受开关影响。
+
+```ini
+# /etc/thickearth/shared-llm.env
+AI_SHARED_LLM=1
+AI_SHARED_USER_ID=user_xxxx
+ADMIN_USER_EMAIL=owner@example.com
+```
+
+改完 `systemctl restart thickearth`。撤销管理员身份需要直接在数据库中把
+`users.is_admin` 置 0，网页不提供该操作。

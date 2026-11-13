@@ -84,6 +84,70 @@ export async function mount(container, route) {
   const aiFeatureEnabled = Boolean(features.llm);
   const aiAuthBlocked = requiresAuth() && !isSignedIn();
   let disposed = false;
+  // Site administration is server-granted; the flag arrives with the session.
+  const isAdmin = Boolean(session.user && session.user.isAdmin);
+  const adminState = { loading: isAdmin, enabled: false, available: false, busy: false, error: '' };
+
+  async function loadAdminShared() {
+    try {
+      const data = await api.adminSharedLlm();
+      if (disposed) return;
+      adminState.enabled = Boolean(data && data.enabled);
+      adminState.available = Boolean(data && data.available);
+      adminState.error = '';
+    } catch (error) {
+      if (disposed) return;
+      adminState.error = describeError(error);
+    }
+    adminState.loading = false;
+    if (!disposed) render();
+  }
+
+  async function setAdminShared(next) {
+    if (adminState.busy) return;
+    adminState.busy = true;
+    const previous = adminState.enabled;
+    adminState.enabled = next;
+    render();
+    try {
+      const data = await api.setAdminSharedLlm(next);
+      if (disposed) return;
+      adminState.enabled = Boolean(data && data.enabled);
+      adminState.available = Boolean(data && data.available);
+      adminState.error = '';
+      toast(t('adminShared.saved'), { type: 'success' });
+    } catch (error) {
+      if (disposed) return;
+      adminState.enabled = previous;
+      adminState.error = describeError(error);
+      toast(describeError(error), { type: 'error' });
+    }
+    adminState.busy = false;
+    if (!disposed) render();
+  }
+
+  function adminCard() {
+    if (!isAdmin) return null;
+    const content = adminState.loading
+      ? loadingBlock(t('common.loading'))
+      : h('div', { class: 'stack-12' },
+          toggle({
+            label: t('adminShared.toggle'),
+            description: t('adminShared.toggleDesc'),
+            checked: adminState.enabled,
+            onChange: (checked) => setAdminShared(checked)
+          }),
+          h('p', { class: 'card-desc', style: { marginTop: 0 } },
+            adminState.enabled ? t('adminShared.on') : t('adminShared.off')),
+          !adminState.available
+            ? h('p', { class: 'card-desc', style: { marginTop: 0 } }, t('adminShared.sourceMissing'))
+            : null,
+          adminState.error
+            ? h('div', { class: 'form-banner', role: 'alert' }, icon('alert', 15), h('span', null, adminState.error))
+            : null
+        );
+    return sectionCard({ title: t('adminShared.title'), content });
+  }
 
   const aiState = {
     loading: aiFeatureEnabled && !aiAuthBlocked,
@@ -725,6 +789,7 @@ export async function mount(container, route) {
       languageCard(),
       displayCard(),
       dataCard(),
+      isAdmin ? adminCard() : null,
       aiCard(),
       aboutCard()
     );
@@ -737,6 +802,7 @@ export async function mount(container, route) {
   }
 
   render();
+  if (isAdmin) loadAdminShared();
   if (aiFeatureEnabled && !aiAuthBlocked) loadAiSettings();
 
   return function cleanup() {

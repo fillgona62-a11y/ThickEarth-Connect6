@@ -144,3 +144,13 @@ managed or uploaded through the provider's own certificate service.
 Both `AI_SHARED_LLM=1` and an explicitly pinned account are required in web mode. Personal configurations take priority; other signed-in players can select LLM seats without entering a key. Shared keys are never sent to browsers or reused for their personal connection tests. Shared calls are charged to the source account's per-game/monthly limits, plus a per-borrower monthly allowance (default 100) and concurrency caps (4 per billing account, 2 per requester). Failed calls count too. Increase the owner's monthly limit to suit the site, while retaining a total cost cap.
 
 See [complete configuration and security notes](../docs/SECURITY-AND-SHARED-LLM.zh-CN.md). Back up the database and its adjacent `.ai-secret` together before deploying; the usage schema upgrades automatically. Quota concurrency assumes the supplied single Node service. The proxy address is trusted only when the connection comes from a loopback proxy, using its final appended X-Forwarded-For address.
+
+## Administrator UI for the shared LLM
+
+Add `ADMIN_USER_EMAIL=owner@example.com` (or `ADMIN_USER_ID=user_xxxx`) to
+`/etc/thickearth/shared-llm.env` and restart. The account is marked as an
+administrator on startup; registration cannot grant this flag. The admin then
+gets a "Shared LLM" switch under Settings → Site administration. The state is
+persisted in `site_settings` and survives restarts; `AI_SHARED_LLM` is only the
+initial value for a brand-new database. `GET`/`PUT /api/admin/shared-llm` return
+403 for non-admins.

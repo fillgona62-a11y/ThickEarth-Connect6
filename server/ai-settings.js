@@ -100,10 +100,23 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
   // Optional server-wide provider. When enabled, a player with no AI settings of
   // their own borrows this account's provider for LLM seats. The key is still
   // read from the encrypted row — no plaintext credential is stored anywhere.
-  const sharedEnabled = ["1", "true", "yes"].includes(String(env.AI_SHARED_LLM ?? "").toLowerCase());
+  const envSharedDefault = ["1", "true", "yes"].includes(String(env.AI_SHARED_LLM ?? "").toLowerCase());
+  const SHARED_SWITCH_KEY = "shared_llm_enabled";
+
+  // Persisted in site_settings so an administrator's toggle survives a restart.
+  // The environment variable only supplies the initial value for a fresh DB.
+  function isSharedEnabled() {
+    const stored = repositories.getSiteSetting?.(SHARED_SWITCH_KEY);
+    if (stored === null || stored === undefined) return envSharedDefault;
+    return stored === "1" || stored === "true";
+  }
+
+  function setSharedEnabled(enabled) {
+    repositories.setSiteSetting?.(SHARED_SWITCH_KEY, enabled ? "1" : "0", now());
+  }
 
   function sharedUserId() {
-    if (!sharedEnabled) return null;
+    if (!isSharedEnabled()) return null;
     const explicit = String(env.AI_SHARED_USER_ID ?? "").trim();
     if (explicit) return explicit;
     const email = String(env.AI_SHARED_USER_EMAIL ?? "").trim().toLowerCase();
@@ -357,6 +370,8 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     resolveForUse,
     resolveTestCandidate,
     getForMove,
+    isSharedEnabled,
+    setSharedEnabled,
     sharedAvailable,
     getSharedForMove,
     assertQuota,

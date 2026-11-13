@@ -265,6 +265,8 @@ test("an existing version-two database upgrades without losing games or provider
     const migrated = createRepositories(db);
     assert.equal(migrated.getGame(game.id).currentState.seq, 0);
     assert.equal(createAiSettingsService({ repositories: migrated, secretStore: createSecretStore({ secret: "audit-stable-secret" }) }).resolveForUse("owner").apiKey, "audit-owner-key");
-    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 3);
+    assert.equal(db.prepare("PRAGMA user_version").get().user_version, 4);
+    assert.equal(db.prepare("SELECT is_admin FROM users WHERE id = 'owner'").get().is_admin, 0);
+    assert.equal(migrated.getSiteSetting("shared_llm_enabled"), null);
   } finally { db.close(); rmSync(directory, { recursive: true, force: true }); }
 });
