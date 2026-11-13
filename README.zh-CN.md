@@ -197,6 +197,12 @@ node agents/example-client.mjs http://127.0.0.1:7788           # Agent vs 本地
 node agents/example-client.mjs http://127.0.0.1:7788 --arena    # 双 Agent 互斗
 ```
 
+已经在浏览器里开好了对局？去「Agent 座位」面板复制令牌，把外部进程接到那个座位上——`attach-agent.mjs` 是 60 行的起步模板，你只需要写 `chooseMove()` 一个函数：
+
+```bash
+node agents/attach-agent.mjs <gameId> <token> http://127.0.0.1:7788
+```
+
 完整契约见 [`docs/AGENT-SEAT.md`](docs/AGENT-SEAT.md)：鉴权、事件、错误码、超时语义。
 
 ---

@@ -197,6 +197,12 @@ node agents/example-client.mjs http://127.0.0.1:7788           # agent vs local 
 node agents/example-client.mjs http://127.0.0.1:7788 --arena    # agent vs agent
 ```
 
+Already started a game in the browser? Copy the token from the **Agent seat** panel and attach a process to that seat instead — `attach-agent.mjs` is the 60-line starter, and `chooseMove()` is the only function you have to write:
+
+```bash
+node agents/attach-agent.mjs <gameId> <token> http://127.0.0.1:7788
+```
+
 The full contract is in [`docs/AGENT-SEAT.md`](docs/AGENT-SEAT.md): auth, events, error codes, timeout semantics.
 
 ---
