@@ -114,3 +114,23 @@ certificate for both the apex and `www`, installs a 80-to-443 redirect, changes
 `PUBLIC_ORIGIN` to the HTTPS origin, enables `COOKIE_SECURE=1`, restarts the
 app and enables certificate renewal. A failure at the DNS check leaves the
 running HTTP site untouched.
+
+## Domains without an ICP filing
+
+On a mainland-China VM, an unfiled domain is eventually redirected to a
+DNSPod blocking page (`.../static/webblock.html?d=<domain>`) on ports 80/443.
+Server-side checks still pass, which makes this look like an application bug —
+always test from an external network when diagnosing it.
+
+Until the filing is approved, serve the app by IP over plain HTTP with
+`thickearth-http.service` and `nginx-http.conf`:
+
+- `PUBLIC_ORIGIN=http://<public-ip>` and **`COOKIE_SECURE=0`** (the web-mode
+  default is `true`, so omitting it silently breaks login over HTTP).
+- nginx listens on 80 and proxies to `127.0.0.1:8080` with no redirect.
+- Keep the Let's Encrypt certificate on disk; it is not affected by the block.
+- After the filing is approved, run `enable-https.sh` again to switch back.
+
+A certificate issued by `certbot` on the host will NOT appear in the cloud
+provider's "SSL certificates" console — that console only lists certificates
+managed or uploaded through the provider's own certificate service.

@@ -18,8 +18,11 @@ Environment=PORT=8080
 Environment=DATA_DIR=/var/lib/thickearth
 # Replace the placeholder with the exact address in the browser's URL bar.
 Environment=PUBLIC_ORIGIN=http://YOUR_SERVER_IP
-# COOKIE_SECURE is deliberately absent. Setting it over plain HTTP makes the
-# login cookie disappear on the next request and the session never sticks.
+# COOKIE_SECURE must be set to 0 explicitly. In web mode the server DEFAULTS
+# this flag to true, so simply omitting it makes login cookies Secure and they
+# are never sent back over plain HTTP — registration succeeds but nobody stays
+# logged in. Set it back to 1 only after switching to HTTPS.
+Environment=COOKIE_SECURE=0
 
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
 
