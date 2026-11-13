@@ -1,5 +1,7 @@
 # ThickEarth 厚土 · 六子棋（Connect6）
 
+[English](README.en.md) · **中文**
+
 一个可以打、可以看、可以导出的六子棋 Web 应用。有前后端、SQLite 存对局、内置 AI 对手、赛后分析与点评、棋谱导出，并且对外开放 **Agent 座位**——任何外部进程（自己的脚本、LLM 应用、Claude Code / Codex 这类 CLI Agent）都可以领一个令牌坐进棋盘，跟本地 AI 或另一个 Agent 对打。
 
 零第三方运行时依赖，只用 Node 内置模块（含 `node:sqlite`）。需要 **Node >= 22.5**。
