@@ -99,3 +99,18 @@ will not make the provider appear. Register an account, open Settings, and enter
 the base URL, model and API key again. Do not copy `.ai-secret` or the database
 unless you also remap the `ai_settings.user_id` row — that would move a live
 credential onto a public host for no benefit.
+
+## Adding HTTPS later
+
+Once the domain resolves to the host and TCP 443 is allowed by the security
+group, `enable-https.sh` switches the HTTP installation over in one pass:
+
+```bash
+DOMAIN=example.com bash /root/enable-https.sh
+```
+
+It verifies DNS first, serves the ACME challenge on port 80, issues a
+certificate for both the apex and `www`, installs a 80-to-443 redirect, changes
+`PUBLIC_ORIGIN` to the HTTPS origin, enables `COOKIE_SECURE=1`, restarts the
+app and enables certificate renewal. A failure at the DNS check leaves the
+running HTTP site untouched.
