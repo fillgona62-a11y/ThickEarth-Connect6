@@ -11,6 +11,7 @@
  */
 
 import { AiProviderError } from "./errors.js";
+import { createProviderFetch } from "./ai-network.js";
 
 export const AI_PRESETS = Object.freeze([
   { id: "deepseek", label: "DeepSeek", labelZh: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
@@ -243,12 +244,14 @@ function mockCompletion({ messages, kind, model, mockContext }) {
 }
 
 export function createProvider(settings, {
-  fetchImpl = globalThis.fetch,
+  fetchImpl = null,
+  mode = "web",
   timeoutMs = DEFAULT_TIMEOUT_MS,
   maxResponseBytes = DEFAULT_MAX_RESPONSE_BYTES,
   logger = null,
   env = process.env
 } = {}) {
+  const providerFetch = fetchImpl ?? createProviderFetch({ mode });
   const baseUrl = normalizeBaseUrl(settings?.baseUrl);
   const model = String(settings?.model ?? "").trim();
   const apiKey = String(settings?.apiKey ?? "");
@@ -269,10 +272,16 @@ export function createProvider(settings, {
     const startedAt = Date.now();
     const controller = new AbortController();
     const budget = Number.isFinite(callTimeoutMs) && callTimeoutMs > 0 ? callTimeoutMs : timeoutMs;
-    const timer = setTimeout(() => controller.abort(), budget);
+    let rejectTimeout;
+    const timeout = new Promise((_, reject) => { rejectTimeout = reject; });
+    const timer = setTimeout(() => {
+      controller.abort();
+      rejectTimeout(new AiProviderError("AI_PROVIDER_ERROR", "The AI provider request timed out.", { retryable: true }));
+    }, budget);
     let response;
+    let bodyText;
     try {
-      response = await fetchImpl(baseUrl + "/chat/completions", {
+      response = await Promise.race([providerFetch(baseUrl + "/chat/completions", {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
@@ -286,22 +295,23 @@ export function createProvider(settings, {
           stream: false,
           ...(thinkingSwitch && kind === "move" ? { thinking: { type: "disabled" } } : {})
         }),
-        signal: controller.signal
-      });
+        signal: controller.signal,
+        redirect: "error"
+      }), timeout]);
+      if (response.status >= 300 && response.status < 400) {
+        controller.abort();
+        throw new AiProviderError("AI_PROVIDER_ERROR", "Provider redirects are not allowed.");
+      }
+      bodyText = await Promise.race([readBodyWithinLimit(response, maxResponseBytes), timeout]);
     } catch (error) {
+      controller.abort();
+      if (error instanceof AiProviderError) throw error;
       if (error?.name === "AbortError") {
         throw new AiProviderError("AI_PROVIDER_ERROR", "The AI provider request timed out.", { retryable: true });
       }
       throw new AiProviderError("AI_PROVIDER_ERROR", "The AI provider request failed.", { retryable: true });
     } finally {
       clearTimeout(timer);
-    }
-    let bodyText;
-    try {
-      bodyText = await readBodyWithinLimit(response, maxResponseBytes);
-    } catch (error) {
-      if (error instanceof AiProviderError) throw error;
-      throw new AiProviderError("AI_PROVIDER_ERROR", "The AI provider response could not be read.");
     }
     if (!response.ok) {
       logger?.warn?.("AI provider returned HTTP " + response.status + " for " + providerName + ".");

@@ -20,6 +20,7 @@ Environment=DATA_DIR=/var/lib/thickearth
 Environment=PUBLIC_ORIGIN=https://thickearth.example.com
 # Only set this once HTTPS is in place, otherwise the login cookie is rejected.
 Environment=COOKIE_SECURE=1
+EnvironmentFile=-/etc/thickearth/shared-llm.env
 
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
 

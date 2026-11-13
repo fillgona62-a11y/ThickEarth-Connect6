@@ -9,7 +9,8 @@ export const DEFAULT_BODY_LIMIT = 64 * 1024;
 const SECURITY_HEADERS = {
   "X-Content-Type-Options": "nosniff",
   "Referrer-Policy": "no-referrer",
-  "X-Frame-Options": "DENY"
+  "X-Frame-Options": "DENY",
+  "Content-Security-Policy": "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; font-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'self'"
 };
 
 /**
@@ -62,6 +63,10 @@ export function sendNoContent(res, extraHeaders = {}) {
  * Throws HttpError(400) for malformed JSON and HttpError(413) for oversized bodies.
  */
 export function readJsonBody(req, limit = DEFAULT_BODY_LIMIT) {
+  if (!/^application\/json(?:\s*;|$)/i.test(req.headers["content-type"] ?? "")) {
+    req.resume();
+    return Promise.reject(new HttpError(415, "UNSUPPORTED_MEDIA_TYPE", "Use Content-Type: application/json."));
+  }
   const declared = Number(req.headers["content-length"]);
   if (Number.isFinite(declared) && declared > limit) {
     req.resume();
@@ -100,6 +105,7 @@ export function readJsonBody(req, limit = DEFAULT_BODY_LIMIT) {
       }
     });
     req.on("error", () => fail(new HttpError(400, "INVALID_REQUEST", "Request body could not be read.")));
+    req.on("aborted", () => fail(new HttpError(400, "INVALID_REQUEST", "Request body was interrupted.")));
   });
 }
 
@@ -149,6 +155,9 @@ export function serializeCookie(name, value, { maxAgeSeconds, secure = false, sa
  * unsafe methods, so a mismatch means the request came from another site.
  */
 export function assertAllowedOrigin(req, { publicOrigin = null } = {}) {
+  if (req.headers["sec-fetch-site"] === "cross-site") {
+    throw new HttpError(403, "FORBIDDEN_ORIGIN", "Cross-site API requests are not allowed.");
+  }
   const origin = req.headers.origin;
   if (typeof origin !== "string" || origin.length === 0) return;
   let parsed;
@@ -176,12 +185,14 @@ export function assertAllowedOrigin(req, { publicOrigin = null } = {}) {
 }
 
 export function clientAddress(req, { trustProxy = false } = {}) {
-  if (trustProxy) {
+  const remote = req.socket.remoteAddress ?? "unknown";
+  const localProxy = remote === "::1" || remote.startsWith("127.") || remote.startsWith("::ffff:127.");
+  if (trustProxy && localProxy) {
     const forwarded = req.headers["x-forwarded-for"];
     if (typeof forwarded === "string" && forwarded.length > 0) {
-      const first = forwarded.split(",")[0].trim();
-      if (first) return first;
+      const last = forwarded.split(",").at(-1).trim();
+      if (last) return last;
     }
   }
-  return req.socket.remoteAddress ?? "unknown";
+  return remote;
 }

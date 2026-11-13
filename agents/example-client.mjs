@@ -18,28 +18,13 @@
  *   node agents/example-client.mjs [baseUrl] [--arena]
  */
 
+import { agentBaseUrl, agentRequest } from "./http-client.mjs";
+
 const args = process.argv.slice(2);
-const BASE = args.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:7788";
+const BASE = agentBaseUrl(args.find((arg) => arg.startsWith("http")) ?? "http://127.0.0.1:7788");
 const ARENA = args.includes("--arena");
 
-async function api(path, { method = "GET", body, token } = {}) {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: "Bearer " + token } : {})
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  });
-  const text = await res.text();
-  const payload = text ? JSON.parse(text) : null;
-  if (!res.ok) {
-    const error = new Error((payload?.error?.code ?? res.status) + ": " + (payload?.error?.message ?? ""));
-    error.code = payload?.error?.code;
-    throw error;
-  }
-  return payload;
-}
+const api = (path, options) => agentRequest(BASE, path, options);
 
 const STONE_MARKS = ["X", "O"];
 const DIRECTIONS = [[1, 0], [0, 1], [1, 1], [1, -1]];

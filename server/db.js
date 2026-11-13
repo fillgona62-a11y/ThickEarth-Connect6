@@ -146,6 +146,15 @@ const MIGRATIONS = [
         CREATE INDEX IF NOT EXISTS idx_coach_messages_game ON coach_messages(game_id, id);
       `);
     }
+  },
+  {
+    version: 3,
+    apply(db) {
+      db.exec(`
+        ALTER TABLE ai_usage ADD COLUMN requested_by_user_id TEXT;
+        CREATE INDEX idx_ai_usage_requester_time ON ai_usage(requested_by_user_id, created_at);
+      `);
+    }
   }
 ];
 
@@ -325,8 +334,10 @@ export function createRepositories(db) {
     ),
 
     insertAiUsage: db.prepare(
-      "INSERT INTO ai_usage (user_id, game_id, kind, provider, model, input_tokens, output_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)"
+      "INSERT INTO ai_usage (user_id, game_id, kind, provider, model, input_tokens, output_tokens, created_at, requested_by_user_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
     ),
+    updateAiUsage: db.prepare("UPDATE ai_usage SET input_tokens = ?, output_tokens = ?, model = ? WHERE id = ?"),
+    countRequestedUsage: db.prepare("SELECT COUNT(*) AS count FROM ai_usage WHERE requested_by_user_id = ? AND created_at >= ? AND user_id <> requested_by_user_id"),
     sumAiUsageSince: db.prepare(
       "SELECT COUNT(*) AS calls, COALESCE(SUM(input_tokens), 0) AS input_tokens, COALESCE(SUM(output_tokens), 0) AS output_tokens " +
       "FROM ai_usage WHERE user_id = ? AND created_at >= ?"
@@ -347,7 +358,7 @@ export function createRepositories(db) {
       "INSERT INTO coach_messages (game_id, user_id, role, content, input_tokens, output_tokens, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)"
     ),
     listCoachMessages: db.prepare(
-      "SELECT * FROM coach_messages WHERE game_id = ? ORDER BY id DESC LIMIT ?"
+      "SELECT * FROM coach_messages WHERE game_id = ? AND user_id = ? ORDER BY id DESC LIMIT ?"
     )
   };
 
@@ -491,7 +502,7 @@ export function createRepositories(db) {
     },
 
     insertAiUsage(usage) {
-      statements.insertAiUsage.run(
+      const inserted = statements.insertAiUsage.run(
         usage.userId,
         usage.gameId ?? null,
         usage.kind,
@@ -499,8 +510,16 @@ export function createRepositories(db) {
         usage.model ?? null,
         usage.inputTokens ?? 0,
         usage.outputTokens ?? 0,
-        usage.createdAt
+        usage.createdAt,
+        usage.requestedByUserId ?? usage.userId
       );
+      return Number(inserted.lastInsertRowid);
+    },
+    completeAiUsage(id, completion) {
+      statements.updateAiUsage.run(completion.usage?.inputTokens ?? 0, completion.usage?.outputTokens ?? 0, completion.model ?? null, id);
+    },
+    countRequestedUsage(userId, since) {
+      return Number(statements.countRequestedUsage.get(userId, since)?.count ?? 0);
     },
     sumAiUsageSince(userId, since) {
       const row = statements.sumAiUsageSince.get(userId, since);
@@ -546,8 +565,8 @@ export function createRepositories(db) {
       );
       return Number(result.lastInsertRowid);
     },
-    listCoachMessages(gameId, limit = 50) {
-      return statements.listCoachMessages.all(gameId, limit).reverse().map(mapCoachMessageRow);
+    listCoachMessages(gameId, limit = 50, userId) {
+      return statements.listCoachMessages.all(gameId, userId ?? "", limit).reverse().map(mapCoachMessageRow);
     }
   };
 }

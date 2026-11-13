@@ -22,6 +22,9 @@ const DEFAULT_DESKTOP_PORT = 0;
 export function resolveRuntimeOptions(options = {}, env = process.env) {
   const mode = resolveMode(options.mode ?? env.APP_MODE);
   const host = options.host ?? env.HOST ?? (mode === "desktop" ? "127.0.0.1" : "0.0.0.0");
+  if (mode === "desktop" && !["127.0.0.1", "localhost", "::1"].includes(host)) {
+    throw new Error("Desktop mode must bind to a loopback address. Use APP_MODE=web for a public server.");
+  }
   const port = options.port ?? parsePort(env.PORT, mode === "desktop" ? DEFAULT_DESKTOP_PORT : DEFAULT_WEB_PORT);
   const dbPath = options.dbPath ?? env.DB_PATH ?? defaultDatabasePath(mode, env);
   const publicOrigin = options.publicOrigin ?? env.PUBLIC_ORIGIN ?? null;

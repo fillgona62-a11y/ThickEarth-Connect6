@@ -145,7 +145,14 @@ export function createAuthService({ repositories, sessionTtlMs = DEFAULT_SESSION
       passwordHash: await hashPassword(normalizedPassword),
       createdAt: Date.now()
     };
-    repositories.createUser(user);
+    try {
+      repositories.createUser(user);
+    } catch (error) {
+      if (repositories.findUserByEmail(normalizedEmail)) {
+        throw new HttpError(409, "EMAIL_TAKEN", "An account with that email already exists.");
+      }
+      throw error;
+    }
     logger?.info?.("Registered user " + user.id + ".");
     return publicUser(user);
   }
@@ -184,7 +191,10 @@ export function createLoginRateLimiter({ maxAttempts = 10, windowMs = 15 * 60 * 
   return {
     check(key) {
       const entry = attempts.get(key);
-      if (!entry) return null;
+      if (!entry) {
+        if (attempts.size >= MAX_TRACKED_KEYS) prune(Date.now());
+        return attempts.size >= MAX_TRACKED_KEYS ? Math.ceil(windowMs / 1000) : null;
+      }
       const now = Date.now();
       if (entry.resetAt <= now) {
         attempts.delete(key);
@@ -199,7 +209,7 @@ export function createLoginRateLimiter({ maxAttempts = 10, windowMs = 15 * 60 * 
       const entry = attempts.get(key);
       if (!entry) {
         // Bound memory: an attacker cycling emails cannot grow the map without limit.
-        if (attempts.size >= MAX_TRACKED_KEYS) attempts.clear();
+        if (attempts.size >= MAX_TRACKED_KEYS) return;
         attempts.set(key, { count: 1, resetAt: now + windowMs });
         return;
       }

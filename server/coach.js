@@ -98,15 +98,15 @@ export function createCoachService({
     }
   }
 
-  function listMessages(gameId, limit = MAX_TRANSCRIPT_MESSAGES) {
-    return repositories.listCoachMessages(gameId, limit).map(toClientMessage);
+  function listMessages(gameId, userId, limit = MAX_TRANSCRIPT_MESSAGES) {
+    return repositories.listCoachMessages(gameId, limit, userId).map(toClientMessage);
   }
 
   function getCoach(user, game) {
     const stored = repositories.getCoachReport(game.id);
     return {
       report: stored?.status === "ready" ? stored.report : null,
-      messages: listMessages(game.id),
+      messages: listMessages(game.id, user.id),
       config: aiSettings.coachConfig(user.id)
     };
   }
@@ -233,7 +233,7 @@ export function createCoachService({
       analysis: localAnalysis,
       language
     };
-    const provider = providerFactory(settings);
+    const provider = providerFactory(settings, { gameId: game.id, requestingUserId: user.id });
     let inputTokens = 0;
     let outputTokens = 0;
     let previousText = "";
@@ -255,15 +255,6 @@ export function createCoachService({
       }
       inputTokens += completion.usage.inputTokens;
       outputTokens += completion.usage.outputTokens;
-      aiSettings.recordUsage({
-        userId: user.id,
-        gameId: game.id,
-        kind: "coach",
-        provider: settings.provider,
-        model: completion.model ?? settings.model,
-        inputTokens: completion.usage.inputTokens,
-        outputTokens: completion.usage.outputTokens
-      });
       previousText = completion.text;
       const parsed = await protocol.parseCoachReportResponse(completion.text);
       const normalized = parsed ? await normalizeReport(parsed, { game, moves }) : null;
@@ -316,7 +307,7 @@ export function createCoachService({
     const settings = aiSettings.resolveForUse(user.id);
     aiSettings.assertQuota(user.id);
     const localAnalysis = await localAnalysisFor(game);
-    const history = repositories.listCoachMessages(game.id, 8);
+    const history = repositories.listCoachMessages(game.id, 8, user.id);
     const baseContext = {
       game: gameContext(game),
       state: game.currentState,
@@ -326,7 +317,7 @@ export function createCoachService({
       message: content,
       language
     };
-    const provider = providerFactory(settings);
+    const provider = providerFactory(settings, { gameId: game.id, requestingUserId: user.id });
     let inputTokens = 0;
     let outputTokens = 0;
     let previousText = "";
@@ -349,15 +340,6 @@ export function createCoachService({
       }
       inputTokens += completion.usage.inputTokens;
       outputTokens += completion.usage.outputTokens;
-      aiSettings.recordUsage({
-        userId: user.id,
-        gameId: game.id,
-        kind: "chat",
-        provider: settings.provider,
-        model: completion.model ?? settings.model,
-        inputTokens: completion.usage.inputTokens,
-        outputTokens: completion.usage.outputTokens
-      });
       previousText = completion.text;
       reply = await protocol.parseCoachChatResponse(completion.text);
       if (reply) break;
@@ -389,7 +371,7 @@ export function createCoachService({
     });
     return {
       reply,
-      messages: listMessages(game.id),
+      messages: listMessages(game.id, user.id),
       usage: { inputTokens, outputTokens }
     };
   }

@@ -16,6 +16,7 @@
     "test:i18n": "node scripts/check-i18n.mjs",
     "smoke": "node scripts/smoke.mjs",
     "agent:example": "node agents/example-client.mjs",
-    "agent:attach": "node agents/attach-agent.mjs"
+    "agent:attach": "node agents/attach-agent.mjs",
+    "evaluate:agents": "node scripts/evaluate-agents.mjs"
   }
 }

@@ -220,6 +220,14 @@ export function createGameService({
     return row;
   }
 
+  function getPrivateGame(gameId, user) {
+    const row = getRow(gameId);
+    if (!canAccess(row, user, { allowSpectator: false })) {
+      throw new HttpError(403, "FORBIDDEN", "Only game participants can access this resource.");
+    }
+    return row;
+  }
+
   function buildMetrics(state, startedAt, finishedAt, hardestDecisionNote) {
     const durationMs = startedAt !== null && startedAt !== undefined && finishedAt !== null && finishedAt !== undefined
       ? Math.max(0, finishedAt - startedAt)
@@ -247,6 +255,10 @@ export function createGameService({
     const entry = result.action;
     const normalizedAction = normalizeAction(entry);
     repositories.transaction(() => {
+      const current = repositories.getGame(row.id);
+      if (!current || current.currentState.seq !== row.currentState.seq || current.status !== row.status) {
+        throw new HttpError(409, "STALE_TURN", "The position changed. Read it again before acting.");
+      }
       repositories.insertAction({
         gameId: row.id,
         seq: entry.seq,
@@ -271,38 +283,7 @@ export function createGameService({
     });
   }
 
-  function llmCallContext(row, settings, billingUserId) {
-    // Shared-provider calls are charged to the account that supplied the key,
-    // not to whichever player happened to open the game.
-    const chargedTo = billingUserId ?? row.ownerUserId;
-    const beforeCall = () => {
-      const gameCalls = repositories.countAiUsage(chargedTo, row.id, "move");
-      if (gameCalls >= settings.maxMovesPerGame) {
-        logger?.warn?.("The LLM move budget for game " + row.id + " is used up; using the local engine.");
-        return false;
-      }
-      const month = repositories.sumAiUsageSince(chargedTo, aiSettings.startOfMonth(now()));
-      if (month.calls >= settings.monthlyCallLimit) {
-        logger?.warn?.("The monthly AI call limit is reached; using the local engine.");
-        return false;
-      }
-      return true;
-    };
-    const onProviderCall = (completion) => {
-      aiSettings.recordUsage({
-        userId: chargedTo,
-        gameId: row.id,
-        kind: "move",
-        provider: settings.provider,
-        model: completion.model ?? settings.model,
-        inputTokens: completion.usage?.inputTokens ?? 0,
-        outputTokens: completion.usage?.outputTokens ?? 0
-      });
-    };
-    return { beforeCall, onProviderCall };
-  }
-
-  function llmProviderFor(ownerId) {
+  function llmProviderFor(ownerId, gameId) {
     // Personal settings win. Only when that player has none do we borrow the
     // server-wide provider; A (bring your own key) and C (shared) coexist.
     let settings = aiSettings.getForMove(ownerId);
@@ -316,7 +297,7 @@ export function createGameService({
     }
     if (!settings) return null;
     try {
-      return { settings, provider: providerFactory(settings), billingUserId };
+      return { settings, provider: providerFactory(settings, { gameId, requestingUserId: ownerId }), billingUserId };
     } catch (error) {
       logger?.warn?.("The LLM provider could not be created; using the local engine. (" + (error?.message ?? error) + ")");
       return null;
@@ -325,13 +306,12 @@ export function createGameService({
 
   async function tryLlmSeatMove(row, state, seat) {
     if (!aiSettings || !llmEngine || !providerFactory) return null;
-    const resolved = llmProviderFor(row.ownerUserId);
+    const resolved = llmProviderFor(row.ownerUserId, row.id);
     if (!resolved) return null;
     try {
       const result = await llmEngine.choose(state, {
         seat,
-        provider: resolved.provider,
-        ...llmCallContext(row, resolved.settings, resolved.billingUserId)
+        provider: resolved.provider
       });
       return result?.action ?? null;
     } catch (error) {
@@ -343,13 +323,12 @@ export function createGameService({
   /** One provider call for both stones of a turn. Returns [first, second] or null. */
   async function tryLlmSeatTurn(row, state, seat) {
     if (!aiSettings || !llmEngine || !providerFactory) return null;
-    const resolved = llmProviderFor(row.ownerUserId);
+    const resolved = llmProviderFor(row.ownerUserId, row.id);
     if (!resolved) return null;
     try {
       const actions = await llmEngine.chooseTurn(state, {
         seat,
-        provider: resolved.provider,
-        ...llmCallContext(row, resolved.settings, resolved.billingUserId)
+        provider: resolved.provider
       });
       return actions.length > 0 ? actions : null;
     } catch (error) {
@@ -372,7 +351,17 @@ export function createGameService({
     });
   }
 
-  async function advanceAi(gameId, { timeBudgetMs, onProgress = null } = {}) {
+  const aiRuns = new Map();
+  function advanceAi(gameId, options = {}) {
+    const previous = aiRuns.get(gameId) ?? Promise.resolve();
+    const work = previous.catch(() => {}).then(() => runAi(gameId, options)).finally(() => {
+      if (aiRuns.get(gameId) === work) aiRuns.delete(gameId);
+    });
+    aiRuns.set(gameId, work);
+    return work;
+  }
+
+  async function runAi(gameId, { timeBudgetMs, onProgress = null } = {}) {
     // A two-stone turn is fetched in one LLM call; the second stone waits here
     // until the first has been applied and re-validated against the new board.
     let pending = null;
@@ -433,6 +422,12 @@ export function createGameService({
       if (!action) {
         logger?.error?.("The AI has no action to choose for game " + gameId + ".");
         return;
+      }
+      const latest = repositories.getGame(gameId);
+      if (!latest) return;
+      if (latest.currentState.seq !== state.seq || latest.status !== row.status) {
+        pending = null;
+        continue;
       }
       try {
         applyAndPersist(row, action);
@@ -542,7 +537,7 @@ export function createGameService({
     if (row.seats.some((seat) => !seat.userId)) {
       throw new HttpError(409, "SEATS_NOT_FILLED", "All seats must be filled before the game starts.");
     }
-    repositories.updateGame(row.id, { status: PHASES.SETUP, startedAt: now() });
+    repositories.updateGame(row.id, { status: PHASES.PLAY, startedAt: now() });
     return getRow(row.id);
   }
 
@@ -624,7 +619,10 @@ export function createGameService({
     const row = getRow(gameId);
     assertAgentSeat(row, seat);
     const state = assertSeatToMove(row, seat);
-    if (turnId !== undefined && turnId !== null && Number(turnId) !== state.seq) {
+    if (!Number.isSafeInteger(turnId) || turnId < 0) {
+      throw new HttpError(400, "INVALID_TURN_ID", "A non-negative integer turnId is required.");
+    }
+    if (turnId !== state.seq) {
       throw new HttpError(409, "STALE_TURN", "Turn " + turnId + " is not current; the position moved to turn " + state.seq + ".");
     }
     applyAndPersist(row, rawAction);
@@ -657,9 +655,11 @@ export function createGameService({
       logger?.warn?.("The agent fallback engine failed to choose an action. (" + (error?.message ?? error) + ")");
     }
     if (!chosen) chosen = legal[0];
+    const latest = repositories.getGame(gameId);
+    if (!latest || latest.currentState.seq !== state.seq || latest.status !== row.status) return null;
     logger?.warn?.("Agent seat " + (seat + 1) + " missed the deadline in game " + row.id + "; playing a fallback action.");
     repositories.updateGame(row.id, {
-      seats: row.seats.map((entry, index) => (
+      seats: latest.seats.map((entry, index) => (
         index === seat ? { ...entry, fallbackCount: (entry.fallbackCount ?? 0) + 1 } : entry
       ))
     });
@@ -688,7 +688,7 @@ export function createGameService({
   }
 
   function setHardestDecision(gameId, user, note) {
-    const row = getGameForUser(gameId, user);
+    const row = getPrivateGame(gameId, user);
     if (typeof note !== "string") {
       throw new HttpError(400, "INVALID_NOTE", "The note must be a string.");
     }
@@ -706,7 +706,7 @@ export function createGameService({
   }
 
   async function generateAnalysis(gameId, user) {
-    const row = getGameForUser(gameId, user);
+    const row = getPrivateGame(gameId, user);
     if (row.status === "lobby") {
       throw new HttpError(409, "GAME_NOT_STARTED", "The game has not started yet.");
     }
@@ -731,6 +731,14 @@ export function createGameService({
 
   function listActions(gameId) {
     return repositories.listActions(gameId);
+  }
+
+  function setAgentDeadline(gameId, seat, turnId, deadlineAt) {
+    const row = getRow(gameId);
+    if (row.currentState.seq !== turnId || row.currentState.currentSeat !== seat) return;
+    repositories.updateGame(gameId, { seats: row.seats.map((entry, index) => (
+      index === seat ? { ...entry, deadlineSeq: turnId, deadlineAt } : entry
+    )) });
   }
 
   function describeViewer(row, user) {
@@ -816,6 +824,8 @@ export function createGameService({
     create,
     list,
     get: getGameForUser,
+    getPrivate: getPrivateGame,
+    setAgentDeadline,
     join,
     start,
     submitAction,

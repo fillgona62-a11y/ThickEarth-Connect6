@@ -78,27 +78,31 @@ export function createAgentDeadlineScheduler({
   }
 
   /**
-   * Re-arms the timer for the current position. Safe to call on every read: it
-   * cancels the previous timer and only creates one when an agent seat is on the
-   * clock. timeLimitMs = 0 means the seat waits indefinitely and gets no timer.
+   * Keep one fixed deadline per position. Reads cannot extend it; a persisted
+   * deadline also survives restart. timeLimitMs = 0 waits indefinitely.
    */
   function schedule(row) {
     if (!row || !row.id) return;
-    cancel(row.id);
-    if (row.status === "lobby" || row.status === "finished") return;
+    const existing = timers.get(row.id);
     const state = row.currentState;
     const seat = state?.currentSeat;
-    if (!Number.isInteger(seat)) return;
     const config = row.seats?.[seat];
-    if (!config || config.kind !== "agent") return;
-    const limit = Number(config.timeLimitMs ?? 0);
-    if (!Number.isFinite(limit) || limit <= 0) return;
+    const limit = Number(config?.timeLimitMs ?? 0);
+    if (row.status === "lobby" || row.status === "finished" || !Number.isInteger(seat)
+        || !config || config.kind !== "agent" || !Number.isFinite(limit) || limit <= 0) {
+      cancel(row.id);
+      return;
+    }
     const turnId = state.seq;
-    const deadlineAt = now() + limit;
+    if (existing?.seat === seat && existing.turnId === turnId) return;
+    cancel(row.id);
+    const deadlineAt = config.deadlineSeq === turnId && Number.isFinite(config.deadlineAt)
+      ? config.deadlineAt : now() + limit;
+    games.setAgentDeadline?.(row.id, seat, turnId, deadlineAt);
     const timer = setTimeout(() => {
       timers.delete(row.id);
       void fire(row.id, seat, turnId);
-    }, limit);
+    }, Math.max(0, deadlineAt - now()));
     if (typeof timer.unref === "function") timer.unref();
     timers.set(row.id, { timer, seat, turnId, deadlineAt });
   }

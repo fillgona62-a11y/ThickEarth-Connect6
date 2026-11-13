@@ -50,6 +50,9 @@ function buildJsonRecord(row, actions) {
         seat,
         name: player.name,
         kind: player.kind,
+        engine: row.seats[seat]?.engine ?? null,
+        fallbackCount: row.seats[seat]?.fallbackCount ?? 0,
+        timeLimitMs: row.seats[seat]?.timeLimitMs ?? null,
         color: player.color,
         userId: row.seats[seat]?.userId ?? null
       }))

@@ -118,22 +118,29 @@ export function createApplication(options = {}) {
     secretStore,
     mode,
     logger,
-    now: options.now
+    now: options.now,
+    env: options.env ?? process.env
   });
   const agentProtocol = createAgentProtocol({ logger });
   const providerEnv = options.aiMock
     ? { ...process.env, THICK_EARTH_AI_MOCK: "1" }
     : (options.env ?? process.env);
   const providerOptions = {
-    fetchImpl: options.fetchImpl ?? globalThis.fetch,
+    fetchImpl: options.fetchImpl ?? null,
+    mode,
     timeoutMs: options.aiTimeoutMs ?? DEFAULT_TIMEOUT_MS,
     logger,
     env: providerEnv
   };
-  const providerFactory = (providerSettings, overrides = {}) => createProvider(providerSettings, {
-    ...providerOptions,
-    ...overrides
-  });
+  const providerFactory = (providerSettings, context = {}) => {
+    const provider = createProvider(providerSettings, providerOptions);
+    return {
+      ...provider,
+      complete: (call) => aiSettings.withUsage(providerSettings, {
+        ...context, kind: call.kind === "coach-report" ? "coach" : call.kind === "coach-chat" ? "chat" : call.kind
+      }, () => provider.complete(call))
+    };
+  };
   const llmEngine = createLlmMoveEngine({ protocol: agentProtocol, logger, maxAttempts: 1 });
 
   const auth = createAuthService({ repositories, sessionTtlMs, logger });
@@ -141,6 +148,9 @@ export function createApplication(options = {}) {
     maxAttempts: options.loginMaxAttempts ?? DEFAULT_LOGIN_MAX_ATTEMPTS,
     windowMs: options.loginWindowMs ?? DEFAULT_LOGIN_WINDOW_MS
   });
+  const authLimiter = createLoginRateLimiter({ maxAttempts: 60, windowMs: DEFAULT_LOGIN_WINDOW_MS });
+  const registrationLimiter = createLoginRateLimiter({ maxAttempts: 10, windowMs: DEFAULT_LOGIN_WINDOW_MS });
+  const apiLimiter = createLoginRateLimiter({ maxAttempts: 1200, windowMs: 60_000 });
   const ai = options.ai ?? createAiEngine({ logger });
   const analysisEngine = options.analysis ?? createAnalysisEngine({ logger });
   const realtime = createRealtimeHub({ logger });
@@ -176,10 +186,31 @@ export function createApplication(options = {}) {
     assetLoader: options.assetLoader ?? null,
     logger
   });
+  // Restore deadlines after a restart, including games without an attached browser.
+  for (const row of repositories.listGames()) agentDeadlines.schedule(row);
 
   function requireUser(ctx) {
     if (!ctx.user) throw new HttpError(401, "UNAUTHENTICATED", "Sign in to continue.");
     return ctx.user;
+  }
+
+  function checkRate(limiter, key) {
+    const retryAfter = limiter.check(key);
+    if (retryAfter !== null) throw new HttpError(429, "RATE_LIMITED", "Too many requests. Try again later.", {
+      headers: { "Retry-After": String(retryAfter) }
+    });
+    limiter.recordFailure(key);
+  }
+
+  function privateGame(ctx, gameId) {
+    return games.getPrivate(gameId, requireUser(ctx));
+  }
+
+  function eventAuthorization(req, agent = false) {
+    return () => {
+      try { return agent ? Boolean(requireAgent(req)) : Boolean(resolveUser(req)); }
+      catch { return false; }
+    };
   }
 
   function resolveUser(req) {
@@ -267,6 +298,7 @@ export function createApplication(options = {}) {
 
   async function handleRegister(ctx) {
     if (mode !== "web") throw new HttpError(403, "AUTH_DISABLED", "Authentication is only available in web mode.");
+    checkRate(registrationLimiter, clientAddress(ctx.req, { trustProxy }));
     const body = await readJsonBody(ctx.req, bodyLimit);
     const user = await auth.register(body ?? {});
     startUserSession(ctx.res, user.id);
@@ -275,6 +307,7 @@ export function createApplication(options = {}) {
 
   async function handleLogin(ctx) {
     if (mode !== "web") throw new HttpError(403, "AUTH_DISABLED", "Authentication is only available in web mode.");
+    checkRate(authLimiter, clientAddress(ctx.req, { trustProxy }));
     const body = await readJsonBody(ctx.req, bodyLimit);
     const email = normalizeEmail(body?.email);
     const limiterKey = clientAddress(ctx.req, { trustProxy }) + "|" + email;
@@ -383,6 +416,7 @@ export function createApplication(options = {}) {
     }
     const minted = mintAgentToken(row.id, seatNumber);
     games.setAgentSeatToken(row.id, seatNumber, minted.hash);
+    realtime.closeSeat(row.id, seatNumber);
     sendJson(ctx.res, 201, {
       seat: seatNumber,
       token: minted.token,
@@ -430,11 +464,12 @@ export function createApplication(options = {}) {
   }
 
   async function handleAgentAction(ctx) {
-    const { row, seat } = requireAgent(ctx.req);
+    requireAgent(ctx.req);
     const body = await readJsonBody(ctx.req, bodyLimit);
     if (!body || typeof body !== "object" || body.action === undefined) {
       throw new HttpError(400, "INVALID_ACTION", "Request body must contain an action.");
     }
+    const { row, seat } = requireAgent(ctx.req);
     const updated = await games.submitAgentAction(row.id, seat, body.action, { turnId: body.turnId });
     broadcastGameState(updated.id);
     sendJson(ctx.res, 200, agentPayload(updated, seat));
@@ -444,6 +479,7 @@ export function createApplication(options = {}) {
     const { row, seat } = requireAgent(ctx.req);
     agentDeadlines.schedule(row);
     const res = ctx.res;
+    const client = realtime.subscribe(row.id, { user: localViewer, res, seat, isAuthorized: eventAuthorization(ctx.req, true) });
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -451,7 +487,7 @@ export function createApplication(options = {}) {
       "X-Accel-Buffering": "no"
     });
     if (typeof res.flushHeaders === "function") res.flushHeaders();
-    const client = realtime.subscribe(row.id, { user: localViewer, res, seat });
+
     realtime.send(client, "state", games.buildGameView(row, localViewer));
     realtime.send(client, "turn", games.buildAgentTurnView(row, seat, {
       deadlineAt: agentDeadlines.deadlineFor(row.id, seat)
@@ -462,6 +498,7 @@ export function createApplication(options = {}) {
     const user = requireUser(ctx);
     const row = games.get(gameId, user);
     const res = ctx.res;
+    const client = realtime.subscribe(row.id, { user, res, isAuthorized: eventAuthorization(ctx.req) });
     res.writeHead(200, {
       "Content-Type": "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
@@ -469,7 +506,7 @@ export function createApplication(options = {}) {
       "X-Accel-Buffering": "no"
     });
     if (typeof res.flushHeaders === "function") res.flushHeaders();
-    const client = realtime.subscribe(row.id, { user, res });
+
     realtime.send(client, "state", games.buildGameView(row, user));
   }
 
@@ -502,6 +539,7 @@ export function createApplication(options = {}) {
 
   async function handleGenerateAnalysis(ctx, [gameId]) {
     const user = requireUser(ctx);
+    privateGame(ctx, gameId);
     const analysis = await games.generateAnalysis(gameId, user);
     realtime.publish(gameId, "analysis", analysis);
     sendJson(ctx.res, 200, { analysis });
@@ -534,21 +572,13 @@ export function createApplication(options = {}) {
     aiSettings.assertQuota(user.id);
     let result;
     try {
-      result = await testConnection(candidate, {
+      result = await aiSettings.withUsage(candidate, { kind: "test", requestingUserId: user.id }, () => testConnection(candidate, {
         ...providerOptions,
         buildTestMessages: () => agentProtocol.buildConnectionTestMessages()
-      });
+      }));
     } catch (error) {
       throw mapAiProviderError(error, logger);
     }
-    aiSettings.recordUsage({
-      userId: user.id,
-      kind: "test",
-      provider: candidate.provider,
-      model: result.model ?? candidate.model,
-      inputTokens: result.usage?.inputTokens ?? 0,
-      outputTokens: result.usage?.outputTokens ?? 0
-    });
     sendJson(ctx.res, 200, {
       ok: true,
       latencyMs: result.latencyMs,
@@ -559,14 +589,14 @@ export function createApplication(options = {}) {
 
   function handleGetCoach(ctx, [gameId]) {
     const user = requireUser(ctx);
-    const row = games.get(gameId, user);
+    const row = privateGame(ctx, gameId);
     sendJson(ctx.res, 200, coach.getCoach(user, row));
   }
 
   async function handleGenerateCoach(ctx, [gameId]) {
     const user = requireUser(ctx);
     const body = await readOptionalJsonBody(ctx.req, bodyLimit);
-    const row = games.get(gameId, user);
+    const row = privateGame(ctx, gameId);
     const result = await coach.generate(user, row, {
       force: body?.force === true,
       language: parseLanguage(body?.language)
@@ -577,7 +607,7 @@ export function createApplication(options = {}) {
   async function handleCoachMessage(ctx, [gameId]) {
     const user = requireUser(ctx);
     const body = await readJsonBody(ctx.req, bodyLimit);
-    const row = games.get(gameId, user);
+    const row = privateGame(ctx, gameId);
     const result = await coach.chat(user, row, {
       message: body?.message,
       language: parseLanguage(body?.language)
@@ -640,9 +670,19 @@ export function createApplication(options = {}) {
   router.add("GET", "/api/agent/events", handleAgentEvents);
 
   async function handleApiRequest(req, res, url) {
-    if (mode === "web" && req.method !== "GET" && req.method !== "HEAD") {
-      assertAllowedOrigin(req, { publicOrigin });
+    res.setHeader("Cache-Control", "no-store");
+    if (mode === "desktop") {
+      let host;
+      try { host = new URL("http://" + req.headers.host); } catch { throw new HttpError(403, "FORBIDDEN_ORIGIN", "Invalid host."); }
+      if (!["127.0.0.1", "localhost", "[::1]"].includes(host.hostname)
+          || Number(host.port || 80) !== req.socket.localPort) {
+        throw new HttpError(403, "FORBIDDEN_ORIGIN", "Only the local application host is allowed.");
+      }
     }
+    if (mode === "desktop" || (req.method !== "GET" && req.method !== "HEAD")) {
+      assertAllowedOrigin(req, { publicOrigin: mode === "web" ? publicOrigin : null });
+    }
+    checkRate(apiLimiter, clientAddress(req, { trustProxy }));
     const method = req.method === "HEAD" ? "GET" : req.method;
     const matched = router.match(method, url.pathname);
     if (!matched) {

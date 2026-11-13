@@ -23,6 +23,7 @@ Environment=PUBLIC_ORIGIN=http://YOUR_SERVER_IP
 # are never sent back over plain HTTP — registration succeeds but nobody stays
 # logged in. Set it back to 1 only after switching to HTTPS.
 Environment=COOKIE_SECURE=0
+EnvironmentFile=-/etc/thickearth/shared-llm.env
 
 ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
 

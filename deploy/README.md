@@ -137,20 +137,10 @@ managed or uploaded through the provider's own certificate service.
 
 ## Let other players use your LLM without sharing a key
 
-By default each account needs its own AI provider settings. To let anyone who
-registers pick an `LLM` seat immediately, enable the server-wide provider:
+1. Register your own account on the website and configure/enable its provider in Settings.
+2. Copy `deploy/shared-llm.env.example` to `/etc/thickearth/shared-llm.env`, readable only by root. Replace `owner@example.com` with that existing account's email, or use its exact `AI_SHARED_USER_ID`.
+3. The supplied service templates load this file. For an existing unit add `EnvironmentFile=-/etc/thickearth/shared-llm.env` under `[Service]`, then reload systemd and restart ThickEarth.
 
-```bash
-# In /etc/systemd/system/thickearth.service, add under [Service]:
-Environment=AI_SHARED_LLM=1
-# Optional: pin the source account instead of auto-selecting the earliest
-# configured row: Environment=AI_SHARED_USER_ID=user_xxxx
-sudo systemctl daemon-reload && sudo systemctl restart thickearth
-```
+Both `AI_SHARED_LLM=1` and an explicitly pinned account are required in web mode. Personal configurations take priority; other signed-in players can select LLM seats without entering a key. Shared keys are never sent to browsers or reused for their personal connection tests. Shared calls are charged to the source account's per-game/monthly limits, plus a per-borrower monthly allowance (default 100) and concurrency caps (4 per billing account, 2 per requester). Failed calls count too. Increase the owner's monthly limit to suit the site, while retaining a total cost cap.
 
-Personal settings always take priority; only accounts with no usable
-configuration borrow the shared one. The shared key is read from the encrypted
-`ai_settings` row — no plaintext credential is added to the unit file, and the
-key never reaches the browser. All borrowed calls are charged to the source
-account's per-game and monthly caps, so consider raising `monthlyCallLimit` in
-Settings if several people will play.
+See [complete configuration and security notes](../docs/SECURITY-AND-SHARED-LLM.zh-CN.md). Back up the database and its adjacent `.ai-secret` together before deploying; the usage schema upgrades automatically. Quota concurrency assumes the supplied single Node service. The proxy address is trusted only when the connection comes from a loopback proxy, using its final appended X-Forwarded-For address.

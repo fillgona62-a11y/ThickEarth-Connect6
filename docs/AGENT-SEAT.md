@@ -134,14 +134,13 @@ Returns the same shape as `GET /api/agent/game`, already updated.
 `action` is always `{"type":"place","x","y"}` — one stone per request. There is no
 `camp`, `recall`, `pass` or `resign` action in Connect6, and requests that send one
 are rejected with `400 INVALID_ACTION`. Coordinates are 0-based (`x` = column
-index 0–18, `y` = row index 0–18); `x:9, y:9` is the K10 point.
+index 0–18, `y` = row index 0–18); `x:9, y:9` is the J10 point.
 Only actions listed in `turn.legalActions` are accepted.
 
 **Always send `turnId`.** It is the position sequence number. If the position has
 already moved on — a fallback played for you, a stale retry, two workers sharing
 one token — the request is rejected with `409 STALE_TURN` instead of silently
-applying a move to a board you never saw. Omitting `turnId` skips that check, which
-is only appropriate for a single-threaded client that never retries.
+applying a move to a board you never saw. A non-negative integer `turnId` is mandatory; missing or non-integer values return `400 INVALID_TURN_ID`.
 
 ### `GET /api/agent/events`
 
@@ -156,8 +155,8 @@ data: { "turnId": 12, "seat": 0, "isMyTurn": true, "legalActions": [...],
         "timeLimitMs": 20000, "deadlineAt": 1794370063936 }
 ```
 
-The stream sends `state` and `turn` immediately on connect, then resends both after
-every move anywhere in the game. A `ping` event arrives every 25s; ignore it.
+The stream sends `state` and `turn` immediately on connect, then sends current snapshots after accepted submissions and deadline updates.
+Automatic AI stones may be coalesced in one update. Token rotation closes the old stream. A `ping` event arrives every 25s; ignore it.
 
 Polling `GET /api/agent/game` is supported and is what the reference client does.
 SSE is the better choice for latency: a 20s deadline leaves little room for a slow
@@ -167,7 +166,7 @@ poll interval.
 
 If an agent seat is on the clock and `timeLimitMs > 0` expires without a move, the
 server plays a **local heuristic stone** for that seat so the game cannot stall.
-The fallback:
+Reads do not extend the deadline. Deadlines persist across server restarts. The fallback:
 
 - only fires if the seat is still the one on the clock and `turnId` is unchanged,
   so it can never overwrite a real move that arrived moments later;
@@ -219,7 +218,7 @@ Rules of thumb:
 
 ## Notes and limits
 
-- Agent seats exist in `local`, `ai`, `selfplay`, and `arena` modes. `online` mode
+- Agent seats can be created in `ai` and `arena` modes. `online` mode
   is human-only: it binds seats to user sessions, not tokens.
 - The HTTP API sends no CORS headers, so browser-based agents are blocked by
   same-origin policy. Run the agent as a local process (Node, Python, Go, a CLI
@@ -227,3 +226,7 @@ Rules of thumb:
 - In `desktop` mode the API listens on `127.0.0.1` only, which is the intended
   trust boundary for a local agent. In `web` mode, treat agent tokens as you would
   any other bearer secret and front the server with TLS.
+
+## Client transport and evaluation
+
+Remote sample clients require HTTPS, reject redirects, and cap request time and response size. `attach-agent.mjs` accepts `THICK_EARTH_AGENT_TOKEN` so the bearer secret need not appear in command arguments; it checks that the token belongs to the requested game. On a website, create/mint through the signed-in UI, then attach; the auto-create example targets local desktop mode. Run `npm run evaluate:agents` for isolated functional samples. See [evaluation](AGENT-EVALUATION.zh-CN.md).

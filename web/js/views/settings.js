@@ -201,7 +201,9 @@ export async function mount(container, route) {
     const missing = [];
     if (!aiForm.baseUrl.trim()) missing.push(t('settingsAi.baseUrl'));
     if (!aiForm.model.trim()) missing.push(t('settingsAi.model'));
-    if (!aiForm.apiKey.trim() && !(aiState.settings && aiState.settings.hasKey)) {
+    const storedKeyMatches = aiState.settings && aiState.settings.hasKey
+      && aiForm.baseUrl.trim().replace(/\/+$/, '') === aiState.settings.baseUrl;
+    if (!aiForm.apiKey.trim() && !storedKeyMatches) {
       missing.push(t('settingsAi.apiKey'));
     }
     if (missing.length > 0) {

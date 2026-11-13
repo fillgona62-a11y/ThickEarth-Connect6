@@ -14,30 +14,17 @@
  * Contract reference: docs/AGENT-SEAT.md
  */
 
-const [gameArg, tokenArg, baseArg] = process.argv.slice(2);
+import { agentBaseUrl, agentRequest } from "./http-client.mjs";
+
+const [gameArg, secondArg, thirdArg] = process.argv.slice(2);
+const tokenArg = secondArg && !secondArg.startsWith("http") ? secondArg : process.env.THICK_EARTH_AGENT_TOKEN;
 if (!gameArg || !tokenArg) {
-  console.error("usage: node agents/attach-agent.mjs <gameId> <token> [baseUrl]");
+  console.error("usage: node agents/attach-agent.mjs <gameId> [token] [baseUrl] (or set THICK_EARTH_AGENT_TOKEN)");
   process.exit(1);
 }
-const BASE = baseArg && baseArg.startsWith("http") ? baseArg : "http://127.0.0.1:7788";
-
+const BASE = agentBaseUrl(thirdArg ?? (secondArg?.startsWith("http") ? secondArg : "http://127.0.0.1:7788"));
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-async function api(path, { method = "GET", body } = {}) {
-  const res = await fetch(BASE + path, {
-    method,
-    headers: { "Content-Type": "application/json", Authorization: "Bearer " + tokenArg },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  });
-  const text = await res.text();
-  const payload = text ? JSON.parse(text) : null;
-  if (!res.ok) {
-    const error = new Error((payload?.error?.code ?? res.status) + ": " + (payload?.error?.message ?? ""));
-    error.code = payload?.error?.code;
-    throw error;
-  }
-  return payload;
-}
+const api = (path, options = {}) => agentRequest(BASE, path, { ...options, token: tokenArg });
 
 // ---------------------------------------------------------------------------
 // EDIT THIS: given the position, return one legal action ({ type, x, y }).
@@ -69,6 +56,8 @@ async function main() {
       await sleep(500);
       continue;
     }
+
+    if (view.game.id !== gameArg) throw new Error("The token belongs to a different game.");
 
     if (view.game.status === "finished") {
       console.log("\n" + view.game.status);

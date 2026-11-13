@@ -25,6 +25,7 @@ const CSV_COLUMNS = Object.freeze([
   ["winning_line_length", (row, metrics) => metrics.winningLineLength],
   ["end_reason", (row, metrics) => metrics.endReason],
   ["winner_seats", (row, metrics) => joinNumbers(metrics.winnerSeats)],
+  ["agent_fallbacks_by_seat", (row) => joinNumbers((row.seats ?? []).map((seat) => seat.fallbackCount ?? 0))],
   ["hardest_decision_note", (row, metrics) => metrics.hardestDecisionNote ?? ""]
 ]);
 
@@ -147,6 +148,7 @@ function toIso(ms) {
 
 function escapeCsv(value) {
   if (value === null || value === undefined) return "";
-  const text = String(value);
+  const raw = String(value);
+  const text = /^[\s]*[=+@-]|^[\t\r\n]/.test(raw) ? "'" + raw : raw;
   return /[",\r\n]/.test(text) ? '"' + text.replace(/"/g, '""') + '"' : text;
 }

@@ -8,7 +8,9 @@
  */
 
 import { keyHint } from "./ai-secret.js";
-import { isMockBaseUrl, listPresets, MOCK_BASE_URL, normalizeBaseUrl } from "./ai-provider.js";
+import { listPresets } from "./ai-provider.js";
+import { validateBaseUrl } from "./ai-network.js";
+export { validateBaseUrl, isLoopbackHost, isPrivateOrReservedHost } from "./ai-network.js";
 import { HttpError } from "./http.js";
 
 export const DEFAULT_AI_SETTINGS = Object.freeze({
@@ -25,100 +27,10 @@ export const DEFAULT_AI_SETTINGS = Object.freeze({
 const PROVIDER_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/;
 const MODEL_PATTERN = /^[^\s]{1,128}$/;
 const API_KEY_PATTERN = /^\S{8,512}$/;
-const MAX_BASE_URL_LENGTH = 1024;
 
 export function startOfMonth(now = Date.now()) {
   const date = new Date(now);
   return Date.UTC(date.getUTCFullYear(), date.getUTCMonth(), 1);
-}
-
-function normalizeHost(hostname) {
-  const host = String(hostname ?? "").toLowerCase();
-  return host.startsWith("[") && host.endsWith("]") ? host.slice(1, -1) : host;
-}
-
-export function isLoopbackHost(hostname) {
-  const host = normalizeHost(hostname);
-  return host === "localhost" || host === "::1" || host === "127.0.0.1" || host.startsWith("127.");
-}
-
-/**
- * True for loopback, RFC1918, link-local, CGNAT, multicast, IPv6 unique-local and
- * single-label hostnames. Used to keep web deployments from reaching internal
- * services through the provider base URL.
- */
-export function isPrivateOrReservedHost(hostname) {
-  const host = normalizeHost(hostname);
-  if (host.length === 0 || host === "0.0.0.0" || host === "::") return true;
-  if (isLoopbackHost(host)) return true;
-  if (host.endsWith(".localhost") || host.endsWith(".local") || host.endsWith(".internal") || host.endsWith(".home.arpa")) {
-    return true;
-  }
-  if (/^[0-9.]+$/.test(host)) {
-    const parts = host.split(".").map(Number);
-    if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) return true;
-    const [a, b] = parts;
-    if (a === 0 || a === 10 || a === 127) return true;
-    if (a === 100 && b >= 64 && b <= 127) return true;
-    if (a === 169 && b === 254) return true;
-    if (a === 172 && b >= 16 && b <= 31) return true;
-    if (a === 192 && b === 168) return true;
-    if (a === 192 && b === 0 && (parts[2] === 0 || parts[2] === 2)) return true;
-    if (a === 198 && (b === 18 || b === 19)) return true;
-    if (a >= 224) return true;
-    return false;
-  }
-  if (host.includes(":")) {
-    if (host === "::1") return true;
-    if (/^f[cd][0-9a-f]{2}:/.test(host)) return true;
-    if (/^fe[89ab][0-9a-f]:/.test(host)) return true;
-    if (host.startsWith("::ffff:")) return isPrivateOrReservedHost(host.slice(7));
-    return false;
-  }
-  return !host.includes(".");
-}
-
-export function validateBaseUrl(value, { mode = "desktop" } = {}) {
-  const raw = String(value ?? "").trim();
-  if (raw.length === 0) return "";
-  if (raw.length > MAX_BASE_URL_LENGTH) {
-    throw new HttpError(400, "INVALID_BASE_URL", "The base URL is too long.");
-  }
-  if (isMockBaseUrl(raw)) {
-    if (raw !== MOCK_BASE_URL) {
-      throw new HttpError(400, "INVALID_BASE_URL", "Only mock://local is supported for the mock provider.");
-    }
-    return MOCK_BASE_URL;
-  }
-  let url;
-  try {
-    url = new URL(raw);
-  } catch {
-    throw new HttpError(400, "INVALID_BASE_URL", "Enter a valid http(s) base URL.");
-  }
-  if (url.protocol !== "https:" && url.protocol !== "http:") {
-    throw new HttpError(400, "INVALID_BASE_URL", "The base URL must use http or https.");
-  }
-  if (url.username || url.password) {
-    throw new HttpError(400, "INVALID_BASE_URL", "The base URL must not contain credentials.");
-  }
-  if (url.search || url.hash) {
-    throw new HttpError(400, "INVALID_BASE_URL", "The base URL must not contain a query string or fragment.");
-  }
-  if (mode === "web" && url.protocol !== "https:") {
-    throw new HttpError(400, "INVALID_BASE_URL", "Web deployments require an https base URL.");
-  }
-  if (mode === "desktop" && url.protocol === "http:" && !isLoopbackHost(url.hostname)) {
-    throw new HttpError(400, "INVALID_BASE_URL", "Plain http is only allowed for loopback model servers.");
-  }
-  if (mode === "web" && isPrivateOrReservedHost(url.hostname)) {
-    throw new HttpError(400, "INVALID_BASE_URL", "Private or reserved hosts are not allowed in web deployments.");
-  }
-  const path = url.pathname.replace(/\/+$/, "");
-  if (path.length === 0 || path === "/") {
-    throw new HttpError(400, "INVALID_BASE_URL", "The base URL must include the API version prefix, for example https://api.deepseek.com/v1.");
-  }
-  return url.origin + path;
 }
 
 function parseBoolean(value, field) {
@@ -180,6 +92,11 @@ function defaultSettings(userId, now) {
 }
 
 export function createAiSettingsService({ repositories, secretStore, mode = "desktop", logger = null, now = Date.now, env = process.env } = {}) {
+  const activeCalls = new Map();
+  const activeRequesters = new Map();
+  const concurrencyLimit = positiveLimit(env.AI_MAX_CONCURRENT, 4);
+  const sharedUserLimit = positiveLimit(env.AI_SHARED_MAX_CALLS_PER_USER, 100);
+  const requesterConcurrencyLimit = positiveLimit(env.AI_MAX_CONCURRENT_PER_USER, 2);
   // Optional server-wide provider. When enabled, a player with no AI settings of
   // their own borrows this account's provider for LLM seats. The key is still
   // read from the encrypted row — no plaintext credential is stored anywhere.
@@ -188,12 +105,16 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
   function sharedUserId() {
     if (!sharedEnabled) return null;
     const explicit = String(env.AI_SHARED_USER_ID ?? "").trim();
-    return explicit || (repositories.firstConfiguredAiSettingsUserId?.() ?? null);
+    if (explicit) return explicit;
+    const email = String(env.AI_SHARED_USER_EMAIL ?? "").trim().toLowerCase();
+    if (email) return repositories.findUserByEmail(email)?.id ?? null;
+    // Public sites must pin the administrator's account, never the first visitor's key.
+    return mode === "desktop" ? (repositories.firstConfiguredAiSettingsUserId?.() ?? null) : null;
   }
 
   function sharedAvailable() {
     const id = sharedUserId();
-    return id ? isConfigured(getStored(id)) : false;
+    return id ? Boolean(getForMove(id)) : false;
   }
 
   function getSharedForMove() {
@@ -226,7 +147,7 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     const usage = monthUsage(userId);
     return {
       enabled: stored.enabled,
-      configured: isConfigured(stored),
+      configured: isConfigured(stored) && hasKey,
       provider: stored.provider,
       baseUrl: stored.baseUrl,
       model: stored.model,
@@ -235,6 +156,7 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
       maxMovesPerGame: stored.maxMovesPerGame,
       monthlyCallLimit: stored.monthlyCallLimit,
       hasKey,
+      sharedAvailable: sharedAvailable(),
       keyHint: hasKey ? stored.keyHint ?? "" : "",
       usage: {
         monthCalls: usage.calls,
@@ -267,8 +189,9 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     if ("monthlyCallLimit" in body) {
       next.monthlyCallLimit = parseNumber(body.monthlyCallLimit, { field: "Monthly call limit", code: "INVALID_MONTHLY_CALL_LIMIT", min: 0, max: 1000000, integer: true });
     }
-    let apiKeyEncrypted = current.apiKeyEncrypted;
-    let hint = current.keyHint;
+    const endpointChanged = next.baseUrl !== current.baseUrl;
+    let apiKeyEncrypted = endpointChanged ? null : current.apiKeyEncrypted;
+    let hint = endpointChanged ? null : current.keyHint;
     if (body.clearKey === true) {
       apiKeyEncrypted = null;
       hint = null;
@@ -352,7 +275,7 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     const provider = "provider" in input ? parseProvider(input.provider) : stored.provider;
     const baseUrl = "baseUrl" in input ? validateBaseUrl(input.baseUrl, { mode }) : stored.baseUrl;
     const model = "model" in input ? parseModel(input.model) : stored.model;
-    let apiKey = decryptStoredKey(stored);
+    let apiKey = baseUrl === stored.baseUrl ? decryptStoredKey(stored) : null;
     if (input.apiKey !== undefined && input.apiKey !== null && input.apiKey !== "") {
       apiKey = parseApiKey(input.apiKey);
     }
@@ -382,7 +305,7 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
   }
 
   function recordUsage({ userId, gameId = null, kind, provider = null, model = null, inputTokens = 0, outputTokens = 0 }) {
-    repositories.insertAiUsage({
+    return repositories.insertAiUsage({
       userId,
       gameId,
       kind,
@@ -392,6 +315,38 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
       outputTokens: Number.isFinite(outputTokens) ? outputTokens : 0,
       createdAt: now()
     });
+  }
+
+  async function withUsage(settings, { gameId = null, requestingUserId = settings.userId, kind }, work) {
+    const billedTo = settings.userId;
+    const used = repositories.sumAiUsageSince(billedTo, startOfMonth(now()));
+    const concurrent = activeCalls.get(billedTo) ?? 0;
+    const requesterConcurrent = activeRequesters.get(requestingUserId) ?? 0;
+    if (used.calls >= settings.monthlyCallLimit || concurrent >= concurrencyLimit
+        || requesterConcurrent >= requesterConcurrencyLimit
+        || (kind === "move" && repositories.countAiUsage(billedTo, gameId, "move") >= settings.maxMovesPerGame)
+        || (billedTo !== requestingUserId && repositories.countRequestedUsage(requestingUserId, startOfMonth(now())) >= sharedUserLimit)) {
+      throw new HttpError(429, "AI_QUOTA_EXCEEDED", "AI call or concurrency allowance reached.");
+    }
+    // Reserve synchronously before any await: concurrent requests and failed calls consume allowance too.
+    const usageId = repositories.insertAiUsage({
+      userId: billedTo, requestedByUserId: requestingUserId, gameId, kind,
+      provider: settings.provider, model: settings.model, createdAt: now()
+    });
+    activeCalls.set(billedTo, concurrent + 1);
+    activeRequesters.set(requestingUserId, requesterConcurrent + 1);
+    try {
+      const result = await work();
+      repositories.completeAiUsage(usageId, result);
+      return result;
+    } finally {
+      const remaining = (activeCalls.get(billedTo) ?? 1) - 1;
+      if (remaining) activeCalls.set(billedTo, remaining);
+      else activeCalls.delete(billedTo);
+      const requesterRemaining = (activeRequesters.get(requestingUserId) ?? 1) - 1;
+      if (requesterRemaining) activeRequesters.set(requestingUserId, requesterRemaining);
+      else activeRequesters.delete(requestingUserId);
+    }
   }
 
   return {
@@ -408,7 +363,13 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     monthUsage,
     coachConfig,
     recordUsage,
+    withUsage,
     isConfigured,
     startOfMonth
   };
+}
+
+function positiveLimit(value, fallback) {
+  const number = Number(value);
+  return Number.isInteger(number) && number > 0 && number <= 1_000_000 ? number : fallback;
 }
