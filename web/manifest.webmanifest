@@ -1,0 +1,27 @@
+{
+  "name": "厚土 ThickEarth",
+  "short_name": "厚土",
+  "description": "2–4 人确定性抽象领地策略游戏 / A deterministic abstract territory game for 2–4 players.",
+  "lang": "zh-CN",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "orientation": "any",
+  "background_color": "#0b0e10",
+  "theme_color": "#0b0e10",
+  "categories": ["games", "strategy"],
+  "icons": [
+    {
+      "src": "assets/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "assets/maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}

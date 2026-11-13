@@ -1,0 +1,20 @@
+{
+  "name": "thick-earth",
+  "productName": "ThickEarth",
+  "version": "0.4.0",
+  "private": true,
+  "type": "module",
+  "main": "electron/main.js",
+  "description": "ThickEarth — a Connect6 (六子棋) web app with local and online play, a deterministic AI, external agent seats and post-game analysis.",
+  "author": "ThickEarth",
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test",
+    "test:i18n": "node scripts/check-i18n.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "agent:example": "node agents/example-client.mjs"
+  }
+}

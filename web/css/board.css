@@ -1,0 +1,440 @@
+/* ==========================================================================
+   Board — 19 × 19 Connect6 grid
+   ========================================================================== */
+
+.board-area {
+  --board-max: 640px;
+  width: 100%;
+  max-width: var(--board-max);
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.board-shell {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 18px;
+  grid-template-rows: 18px minmax(0, 1fr) 18px;
+  gap: 5px;
+  width: 100%;
+}
+
+.coords {
+  display: grid;
+  font-family: var(--font-mono);
+  font-size: 9px;
+  letter-spacing: 0.08em;
+  color: var(--text-ghost);
+  user-select: none;
+}
+
+.coords--top,
+.coords--bottom {
+  grid-template-columns: repeat(var(--board-size, 19), minmax(0, 1fr));
+  align-items: center;
+}
+
+.coords--left,
+.coords--right {
+  grid-template-rows: repeat(var(--board-size, 19), minmax(0, 1fr));
+  align-items: center;
+}
+
+.coords--top {
+  align-items: end;
+}
+
+.coords--bottom {
+  align-items: start;
+}
+
+.coords--left {
+  justify-items: end;
+}
+
+.coords--right {
+  justify-items: start;
+}
+
+.coord {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  opacity: 0.9;
+}
+
+.board {
+  --board-size: 19;
+  position: relative;
+  display: grid;
+  grid-template-rows: repeat(var(--board-size, 19), minmax(0, 1fr));
+  aspect-ratio: 1 / 1;
+  width: 100%;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background:
+    radial-gradient(120% 90% at 50% 0%, rgba(236, 231, 219, 0.045), transparent 55%),
+    linear-gradient(158deg, #171d20 0%, #101416 48%, #0b0e10 100%);
+  box-shadow:
+    inset 0 0 0 1px rgba(0, 0, 0, 0.35),
+    inset 0 0 60px rgba(0, 0, 0, 0.35),
+    0 30px 80px -44px rgba(0, 0, 0, 0.95),
+    0 0 0 1px rgba(227, 160, 67, 0.05);
+  overflow: hidden;
+  isolation: isolate;
+}
+
+.board::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  border-radius: inherit;
+  box-shadow: inset 0 0 0 1px rgba(236, 231, 219, 0.03);
+}
+
+.board-row {
+  display: grid;
+  grid-template-columns: repeat(var(--board-size, 19), minmax(0, 1fr));
+  min-height: 0;
+}
+
+.cell {
+  position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid rgba(236, 231, 219, 0.05);
+  border-bottom: 1px solid rgba(236, 231, 219, 0.05);
+  outline: none;
+  cursor: default;
+  -webkit-tap-highlight-color: transparent;
+}
+
+.board-row .cell:last-child {
+  border-right: none;
+}
+
+.board-row:last-child .cell {
+  border-bottom: none;
+}
+
+.cell::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(circle at 50% 42%, rgba(236, 231, 219, 0.07), transparent 68%);
+  opacity: 0;
+  transition: opacity var(--dur) var(--ease);
+  z-index: 0;
+}
+
+.cell:hover::before {
+  opacity: 1;
+}
+
+.cell:focus-visible {
+  outline: 2px solid var(--amber-bright);
+  outline-offset: -2px;
+  border-radius: 2px;
+  z-index: 5;
+}
+
+.cell--legal {
+  cursor: pointer;
+}
+
+.board--interactive .cell--legal:hover::before {
+  opacity: 0.95;
+}
+
+/* Star points ------------------------------------------------------------- */
+
+.cell-star {
+  position: absolute;
+  z-index: 0;
+  top: 50%;
+  left: 50%;
+  width: 4px;
+  height: 4px;
+  margin: -2px 0 0 -2px;
+  border-radius: 50%;
+  background: rgba(236, 231, 219, 0.28);
+  pointer-events: none;
+}
+
+/* Stones ------------------------------------------------------------------ */
+
+.piece {
+  position: relative;
+  z-index: 1;
+  width: 86%;
+  height: 86%;
+  overflow: visible;
+  filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.55));
+  transition: transform var(--dur) var(--ease), opacity var(--dur) var(--ease);
+}
+
+/* A stone must read against the board, so "black" is graphite with a light rim
+   rather than pure black, and each seat keeps its own shape. */
+.piece--black { --piece: #2b3338; --piece-bright: #6b7880; --piece-text: #f2efe6; }
+.piece--white { --piece: #f2efe6; --piece-bright: #ffffff; --piece-text: #14181b; }
+
+.piece .piece-shape {
+  fill: var(--piece);
+  stroke: rgba(0, 0, 0, 0.28);
+  stroke-width: 2.5;
+}
+
+.piece--stone .piece-shape {
+  fill: var(--piece);
+  stroke-width: 3;
+}
+
+.piece--black.piece--stone .piece-shape {
+  stroke: rgba(236, 231, 219, 0.42);
+}
+
+.piece--white.piece--stone .piece-shape {
+  stroke: rgba(7, 9, 10, 0.5);
+}
+
+.piece-letter {
+  font-family: var(--font-display);
+  font-size: 42px;
+  font-weight: 700;
+  fill: var(--piece-text);
+  letter-spacing: 0;
+  dominant-baseline: middle;
+}
+
+.cell--pending .piece {
+  opacity: 0.7;
+}
+
+.board--pending {
+  pointer-events: none;
+}
+
+.board--pending::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  background: rgba(7, 9, 10, 0.24);
+}
+
+/* Legal move markers ------------------------------------------------------ */
+
+.cell-marker {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 62%;
+  height: 62%;
+  max-width: 26px;
+  max-height: 26px;
+  border-radius: 50%;
+  border: 1.5px dashed rgba(227, 160, 67, 0.85);
+  background: rgba(227, 160, 67, 0.18);
+  color: var(--amber-bright);
+  box-shadow: 0 0 14px -4px rgba(227, 160, 67, 0.55), inset 0 0 8px rgba(227, 160, 67, 0.12);
+  animation: te-pulse 2600ms ease-in-out infinite;
+}
+
+.cell-marker svg {
+  opacity: 1;
+}
+
+/* On a 19x19 Connect6 board almost every empty point is legal, so a cross on
+   every point is pure noise. The marker only appears on the point under the
+   pointer, or under keyboard focus, where it confirms the target.
+   te-pulse animates opacity, and animations outrank normal declarations, so the
+   idle state has to switch the animation off rather than just set opacity: 0. */
+.cell-marker--hover {
+  opacity: 0;
+  animation: none;
+  transition: opacity var(--dur) var(--ease), transform var(--dur) var(--ease);
+}
+
+.board--interactive .cell--legal:hover .cell-marker--hover,
+.board--interactive .cell--legal:focus-visible .cell-marker--hover {
+  opacity: 1;
+  animation: te-pulse 2600ms ease-in-out infinite;
+}
+
+.board--interactive .cell--legal:hover .cell-marker {
+  background: rgba(227, 160, 67, 0.3);
+  border-color: var(--amber-bright);
+  color: var(--amber-bright);
+  transform: scale(1.06);
+}
+
+/* Last stone -------------------------------------------------------------- */
+
+.cell-last-mark {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 4;
+  width: 6px;
+  height: 6px;
+  border-radius: 2px;
+  background: var(--amber-bright);
+  box-shadow: 0 0 10px rgba(244, 188, 107, 0.85);
+}
+
+.cell--last::after {
+  content: "";
+  position: absolute;
+  inset: 2px;
+  border: 1px solid rgba(244, 188, 107, 0.34);
+  border-radius: 3px;
+  pointer-events: none;
+  z-index: 3;
+}
+
+/* Winning line ------------------------------------------------------------ */
+
+/* Each stone on the winning run gets a golden ring and a glow. A ring reads as
+   "these five are a line" without needing to know the run's direction. */
+.cell--win::before {
+  opacity: 1;
+  background: radial-gradient(circle at 50% 50%, rgba(244, 188, 107, 0.42), transparent 70%);
+}
+
+.cell--win::after {
+  content: "";
+  position: absolute;
+  inset: 5%;
+  border: 1.5px solid rgba(244, 188, 107, 0.8);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
+}
+
+.cell--win .piece {
+  filter: drop-shadow(0 0 7px rgba(244, 188, 107, 0.85));
+}
+
+/* Static diagram ---------------------------------------------------------- */
+
+.board--static {
+  --board-size: 9;
+  width: 100%;
+  max-width: 360px;
+  border-radius: 5px;
+  background: linear-gradient(160deg, #141a1d, #0b0e10);
+  box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.3), var(--shadow-md);
+}
+
+.cell--static {
+  border-color: rgba(236, 231, 219, 0.05);
+}
+
+.cell--static.cell--legal {
+  background: rgba(227, 160, 67, 0.14);
+  box-shadow: inset 0 0 0 1px rgba(227, 160, 67, 0.35);
+}
+
+.cell--static.cell--legal::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--amber);
+  opacity: 0.8;
+}
+
+.stone-token {
+  position: relative;
+  z-index: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 74%;
+  height: 74%;
+  border-radius: 50%;
+  font-family: var(--font-display);
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+}
+
+.stone-token--black {
+  background: #1a1f22;
+  border: 1px solid rgba(255, 253, 246, 0.24);
+  color: #e8e3d7;
+}
+
+.stone-token--white {
+  background: #ece7db;
+  border: 1px solid rgba(0, 0, 0, 0.4);
+  color: #1a1f22;
+}
+
+/* Hint -------------------------------------------------------------------- */
+
+.board-hint {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  margin: 0;
+  color: var(--text-ghost);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+  text-align: center;
+}
+
+.board-hint svg {
+  opacity: 0.7;
+}
+
+/* Compact board (replay rail / inline) ------------------------------------ */
+
+.board-area--compact {
+  --board-max: 440px;
+  gap: 6px;
+}
+
+.board-area--compact .board-hint {
+  display: none;
+}
+
+@media (max-width: 720px) {
+  .board-shell {
+    grid-template-columns: 14px minmax(0, 1fr) 14px;
+    grid-template-rows: 14px minmax(0, 1fr) 14px;
+    gap: 3px;
+  }
+
+  .coords {
+    font-size: 8px;
+  }
+
+  .piece-letter {
+    font-size: 46px;
+  }
+
+  .cell-marker {
+    max-width: 16px;
+    max-height: 16px;
+  }
+
+  .cell-marker svg {
+    width: 9px;
+    height: 9px;
+  }
+}

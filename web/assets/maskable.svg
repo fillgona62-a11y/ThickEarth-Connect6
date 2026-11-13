@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="ThickEarth">
+  <rect width="64" height="64" fill="#0b0e10"/>
+  <path d="M32 16 39.5 18.7 42.3 27 39.5 35.3 32 38 24.5 35.3 21.7 27 24.5 18.7Z" fill="#e3a043"/>
+  <path d="M32 21.5 37 23.5 38.8 27.5 37 31.5 32 33.5 27 31.5 25.2 27.5 27 23.5Z" fill="#0b0e10"/>
+  <text x="32" y="31" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei UI, sans-serif" font-size="10" font-weight="700" fill="#e3a043">A</text>
+  <circle cx="24" cy="46" r="3" fill="#4cb894"/>
+  <circle cx="32" cy="46" r="3" fill="#4cb894"/>
+  <circle cx="40" cy="46" r="3" fill="#4cb894"/>
+</svg>

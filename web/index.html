@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="zh-CN" data-lang="zh">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#0b0e10">
+  <meta name="description" content="厚土 ThickEarth —— 2–4 人确定性抽象领地策略游戏，本地对局、AI 对手、在线房间与测试数据。">
+  <title>厚土 · ThickEarth</title>
+  <link rel="icon" type="image/svg+xml" href="assets/favicon.svg">
+  <link rel="apple-touch-icon" href="assets/mark.svg">
+  <link rel="manifest" href="manifest.webmanifest">
+  <link rel="stylesheet" href="css/tokens.css">
+  <link rel="stylesheet" href="css/app.css">
+  <link rel="stylesheet" href="css/board.css">
+  <link rel="stylesheet" href="css/views.css">
+  <script type="module" src="js/app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#main-content">跳到主要内容</a>
+  <div class="app-shell">
+    <header id="app-header" class="app-header"></header>
+    <main id="main-content" class="app-main" tabindex="-1">
+      <div id="view-root" class="view-root">
+        <div class="boot-loading" role="status" aria-live="polite">
+          <span class="spinner" aria-hidden="true"></span>
+          <span class="boot-loading-text">载入厚土…</span>
+        </div>
+      </div>
+    </main>
+    <footer id="app-footer" class="app-footer"></footer>
+  </div>
+  <div id="toast-region" class="toast-region" role="status" aria-live="polite" aria-atomic="false"></div>
+  <div id="live-region" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
+  <noscript>
+    <div class="noscript-banner">
+      <p>厚土需要启用 JavaScript 才能运行。 / ThickEarth requires JavaScript to run.</p>
+    </div>
+  </noscript>
+</body>
+</html>

@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32" role="img" aria-label="ThickEarth mark">
+  <defs>
+    <linearGradient id="mark-amber" x1="0" y1="0" x2="0.4" y2="1">
+      <stop offset="0" stop-color="#f6c473"/>
+      <stop offset="1" stop-color="#cf8b2e"/>
+    </linearGradient>
+  </defs>
+  <path d="M16 1.5 24.5 4.5 27.5 13 24.5 21.5 16 24.5 7.5 21.5 4.5 13 7.5 4.5Z" fill="url(#mark-amber)"/>
+  <path d="M16 6.5 21.5 8.5 23.5 13 21.5 17.5 16 19.5 10.5 17.5 8.5 13 10.5 8.5Z" fill="#0b0e10"/>
+  <text x="16" y="16.5" text-anchor="middle" font-family="Segoe UI, Microsoft YaHei UI, sans-serif" font-size="7.5" font-weight="700" fill="#f6c473">A</text>
+</svg>
