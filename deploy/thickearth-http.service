@@ -1,0 +1,36 @@
+[Unit]
+Description=ThickEarth · Connect6 (web mode, plain HTTP)
+Documentation=https://github.com/fillgona62-a11y/ThickEarth-Connect6
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=thickearth
+Group=thickearth
+WorkingDirectory=/opt/thickearth
+
+# Web mode: registration + login, Origin checks on state-changing requests.
+# nginx on port 80 is the only public entry point; Node stays on loopback.
+Environment=APP_MODE=web
+Environment=HOST=127.0.0.1
+Environment=PORT=8080
+Environment=DATA_DIR=/var/lib/thickearth
+# Replace the placeholder with the exact address in the browser's URL bar.
+Environment=PUBLIC_ORIGIN=http://YOUR_SERVER_IP
+# COOKIE_SECURE is deliberately absent. Setting it over plain HTTP makes the
+# login cookie disappear on the next request and the session never sticks.
+
+ExecStart=/usr/bin/node --disable-warning=ExperimentalWarning server/index.js
+
+Restart=on-failure
+RestartSec=2
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/thickearth
+
+[Install]
+WantedBy=multi-user.target

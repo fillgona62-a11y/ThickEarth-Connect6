@@ -48,3 +48,47 @@ reaches it over loopback.
   file lives outside the checkout, so `git pull` is safe.
 - A 3 Mbps uplink is roughly 380 KB/s: fine for this UI, and AI traffic happens
   server-side, so it does not consume the player's bandwidth.
+
+## Variant: OpenCloudOS 9, no domain, HTTP only
+
+Use `thickearth-http.service` and `nginx-http.conf` instead of the two files
+above. This is the case for a fresh VM whose security group exposes port 80 but
+has no certificate or registered domain.
+
+```bash
+# Node 22 from NodeSource RPM (OpenCloudOS 9 uses dnf, not apt)
+curl -fsSL https://rpm.nodesource.com/setup_22.x | bash -
+dnf install -y nodejs nginx
+node -v                                  # must be >= 22.5
+
+useradd --system --home /opt/thickearth --shell /sbin/nologin thickearth
+git clone https://github.com/fillgona62-a11y/ThickEarth-Connect6.git /opt/thickearth
+mkdir -p /var/lib/thickearth
+chown -R thickearth:thickearth /opt/thickearth /var/lib/thickearth
+
+# Substitute the public address, then install both units
+sed -i 's/YOUR_SERVER_IP/203.0.113.10/g' \
+  /opt/thickearth/deploy/thickearth-http.service
+cp /opt/thickearth/deploy/thickearth-http.service /etc/systemd/system/thickearth.service
+cp /opt/thickearth/deploy/nginx-http.conf /etc/nginx/conf.d/thickearth.conf
+
+# RHEL-family hosts need both of these; Ubuntu does not
+firewall-cmd --permanent --add-service=http && firewall-cmd --reload
+setsebool -P httpd_can_network_connect 1   # lets nginx reach 127.0.0.1:8080
+
+systemctl daemon-reload
+systemctl enable --now thickearth nginx
+nginx -t
+curl -s http://127.0.0.1/api/config
+```
+
+`PUBLIC_ORIGIN` must be exactly `http://<that IP>` — no trailing slash, no
+`localhost`, no port 8080. The CSRF check compares it against the browser's
+origin, so a mismatch rejects every POST including login.
+
+**AI settings do not come with the code.** `ai_settings` is keyed by `user_id`,
+and a fresh web deployment has new account ids, so copying the desktop database
+will not make the provider appear. Register an account, open Settings, and enter
+the base URL, model and API key again. Do not copy `.ai-secret` or the database
+unless you also remap the `ai_settings.user_id` row — that would move a live
+credential onto a public host for no benefit.
