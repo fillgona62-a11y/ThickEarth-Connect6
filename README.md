@@ -1,243 +1,243 @@
-# ThickEarth 厚土 · 六子棋（Connect6）
+# ThickEarth · Connect6
 
-[English](README.en.md) · **中文**
+**English** · [中文](README.zh-CN.md)
 
-一个可以打、可以看、可以导出的六子棋 Web 应用。有前后端、SQLite 存对局、内置 AI 对手、赛后分析与点评、棋谱导出，并且对外开放 **Agent 座位**——任何外部进程（自己的脚本、LLM 应用、Claude Code / Codex 这类 CLI Agent）都可以领一个令牌坐进棋盘，跟本地 AI 或另一个 Agent 对打。
+A Connect6 web app you can play, watch and export. It has a real front end and back end, stores games in SQLite, ships a built-in AI opponent, does post-game analysis and coaching, exports game records — and opens up **agent seats**: any external process (your own script, an LLM app, a CLI agent such as Claude Code or Codex) can claim a token, take a seat, and play the local AI or another agent.
 
-零第三方运行时依赖，只用 Node 内置模块（含 `node:sqlite`）。需要 **Node >= 22.5**。
+No third-party runtime dependencies — only Node built-ins, including `node:sqlite`. Requires **Node >= 22.5**.
 
 ```
-npm test           # 44 个用例，全绿
-npm run smoke      # 端到端跑一局，校核导出 / 分析 / 统计 / 静态资源
-npm start          # 桌面模式，127.0.0.1 随机端口
+npm test           # 44 test cases, all passing
+npm run smoke      # plays one full game against a real server, then checks export / analysis / stats / static assets
+npm start          # desktop mode on a random 127.0.0.1 port
 ```
 
 ---
 
-## 规则（取自评测 baseline）
+## Rules (as defined by the referee baseline)
 
-| 项 | 值 |
+| | |
 |---|---|
-| 棋盘 | 19 × 19，列 A–S、行 1–19（行 1 在最上方） |
-| 先后 | 黑先（0 号座位） |
-| 每回合落子 | 黑方第一回合 **1 子**，此后每回合 **2 子** |
-| 获胜 | 横、竖、斜任一方向连成 **6 子或以上**，立即获胜 |
-| 不存在 | PASS、禁手、认输、吃子、提子 |
-| 棋盘填满无人连六 | 和棋 |
+| Board | 19 × 19, columns A–S, rows 1–19 (row 1 is the top row) |
+| First move | Black (seat 0) |
+| Stones per turn | Black opens with **1 stone**; every later turn is **2 stones** |
+| Win | **six or more** in a row horizontally, vertically or diagonally, immediately |
+| Not in the game | pass, forbidden moves, resignation, capture |
+| Board full with no six | draw |
 
-**一次 AI 决策 = 一颗落子**，与 baseline `get_move(board)` 的决策边界一致；因此「一回合」可能跨 1~2 次决策。单次决策的硬超时按 10 秒设计（仅作参考，评测以平台实际运行为准）。
+**One AI decision = one stone**, matching the baseline's `get_move(board)` boundary, so a single "turn" can span one or two decisions. The 10-second per-decision deadline is a design reference; the referee platform's real limit wins.
 
-两个容易踩的点：
+Two things that get misread:
 
-- **一子成六即终局**。一回合的第二子还没落下也算赢——落子后立刻判定，不等回合走完。
-- **六子以上都算赢**。七连、八连不设「长连禁手」，判定是 `run.length >= 6`。
+- **A six made by the turn's first stone ends the game at once.** The second stone is never played — the win is checked right after each placement, not at the end of the turn.
+- **Six or more all win.** Seven or eight in a row are fine; there is no overlong-run penalty. The check is `run.length >= 6`.
 
-规则引擎是纯函数（`shared/rules.js`），前端回放直接 import 同一份代码重放，不存在两套实现。
+The rules engine is a pure module (`shared/rules.js`). The replay view imports the same module and replays through it, so there is no second implementation that can drift.
 
 ---
 
-## 功能对照
+## Feature map
 
-| 要求 | 实现 | 位置 |
+| Requirement | Implementation | Where |
 |---|---|---|
-| 棋类 Web 应用，有前后端 | 原生 ESM 前端 + Node HTTP 后端，30+ REST 路由，SSE 实时推送 | `web/`、`server/` |
-| 数据库存储对局信息 | SQLite：对局、动作日志、用户、AI 用量、教练报告 | `server/db.js` |
-| 不限制语言 | 后端只有 Node，前端零构建；Agent 侧任意语言，走 HTTP | — |
-| Agent 功能，能自己接入 AI | 外部 Agent 座位：令牌 + 回合契约 + SSE | `server/agent-seats.js` |
-| 对局分析 | 本地分析引擎，逐手算棋型威胁与得失 | `shared/analysis.js` |
-| 与自己的 AI 对战 | `mode=ai` 人机 / `selfplay` AI 自对弈 / `arena` Agent 打 AI 或 Agent | `server/games.js` |
-| 对战后给缺点和分析 | 教练报告：优点、缺点、关键失误、改进建议、训练计划 | `server/coach.js` |
-| 棋谱导出 | JSON / Markdown / 文本三种格式（MD 含 X/O 终局图），另有试玩数据 CSV | `server/export.js` |
+| Board-game web app with front end and back end | Native ESM front end + Node HTTP backend, 30+ REST routes, SSE push | `web/`, `server/` |
+| Database for game data | SQLite: games, action log, users, AI usage, coach reports | `server/db.js` |
+| Any language allowed | Backend is Node only, front end has no build step; the agent side can be any language over HTTP | — |
+| Agent support, can host an AI | External agent seats: token + turn contract + SSE | `server/agent-seats.js` |
+| Game analysis | Local analysis engine, scores shape threats and swings move by move | `shared/analysis.js` |
+| Play against your own AI | `mode=ai` human vs AI, `selfplay` AI vs AI, `arena` agent vs AI or agent vs agent | `server/games.js` |
+| Post-game weaknesses and analysis | Coach report: strengths, weaknesses, key mistakes, advice, training plan | `server/coach.js` |
+| Game record export | JSON / Markdown / plain text (Markdown includes an X/O final position), plus playtest CSV | `server/export.js` |
 
 ---
 
-## 快速开始
+## Quick start
 
 ```bash
-# 1. 装 Node 22.5+ 后直接跑，无 npm install 步骤（没有依赖）
-npm start                        # 桌面模式：127.0.0.1:随机端口
+# 1. Install Node 22.5+ and run. There is no npm install step, because there are no dependencies.
+npm start                        # desktop mode: 127.0.0.1, random port
 
-# 2. Web 模式（有注册/登录，适合演示和部署）
+# 2. Web mode (registration and login, good for demos and deployment)
 APP_MODE=web PORT=8080 npm start
-# 打开 http://127.0.0.1:8080
+# open http://127.0.0.1:8080
 
-# 3. 跑测试与端到端校验
+# 3. Tests and the end-to-end check
 npm test
 npm run smoke
-npm run test:i18n                # 中英文案键一致性
+npm run test:i18n                # Chinese/English copy keys stay in sync
 ```
 
-环境变量：
+Environment variables:
 
-| 变量 | 说明 |
+| Variable | Meaning |
 |---|---|
-| `APP_MODE` | `desktop`（默认，免鉴权、只听 127.0.0.1）或 `web`（注册登录、按 Origin 校验） |
-| `PORT` / `HOST` | Web 模式默认 8080 / 0.0.0.0；桌面模式默认随机端口 / 127.0.0.1 |
-| `DATA_DIR` / `DB_PATH` | Web 模式默认 `./data/thickearth.db`；桌面模式落在系统用户数据目录 |
-| `PUBLIC_ORIGIN` | Web 部署时填对外域名，用于 CSRF Origin 校验 |
-| `COOKIE_SECURE` | Web 模式走 HTTPS 时设为 1 |
-| `THICK_EARTH_AI_MOCK` | 设为 1 时用内置 mock 提供方，不联网也能演示 AI 流程 |
+| `APP_MODE` | `desktop` (default: no auth, listens on 127.0.0.1 only) or `web` (registration/login, Origin checks) |
+| `PORT` / `HOST` | Web mode defaults to 8080 / 0.0.0.0; desktop mode to a random port / 127.0.0.1 |
+| `DATA_DIR` / `DB_PATH` | Web mode defaults to `./data/thickearth.db`; desktop mode writes to the system user data directory |
+| `PUBLIC_ORIGIN` | Public origin for a web deployment, used by the CSRF Origin check |
+| `COOKIE_SECURE` | Set to 1 when the web deployment is behind HTTPS |
+| `THICK_EARTH_AI_MOCK` | Set to 1 to use the built-in mock provider, so the AI flow can be demoed offline |
 
-桌面版另有 Electron 外壳：`electron/main.js` 起同进程内服务再开窗口，安装包在 Releases。
+There is also an Electron shell: `electron/main.js` starts the server in-process and then opens a window. Installers live in Releases.
 
-### 更新已安装的桌面版
+### Updating an installed desktop build
 
-安装目录下的 Electron 会优先加载 `resources/app.asar`，没有 asar 时退回 `resources/app/` 目录。所以改完源码要让它生效，最省事的做法是把源码目录放进去：
+Electron loads `resources/app.asar` first and falls back to a plain `resources/app/` directory when no asar is present. So the shortest way to get a source change into the installed app is to drop the source in as a directory:
 
 ```bash
 APP="$LOCALAPPDATA/Programs/ThickEarth/resources"
-cp -p "$APP/app.asar" "$APP/app.asar.bak"      # 先留一份原包，回滚就是改回名字
-mv "$APP/app.asar" "$APP/app.asar.disabled"    # 让 Electron 找不到 asar
+cp -p "$APP/app.asar" "$APP/app.asar.bak"      # keep the original; rolling back is just renaming it
+mv "$APP/app.asar" "$APP/app.asar.disabled"    # so Electron cannot find the asar
 mkdir -p "$APP/app"
 for d in desktop electron server shared web; do cp -r "$d" "$APP/app/"; done
 cp -p package.json "$APP/app/"
 ```
 
-之后重启桌面程序即可。回滚：删掉 `app/`，把 `app.asar.bak` 改名回 `app.asar`。
+Restart the desktop app afterwards. To roll back, delete `app/` and rename `app.asar.bak` to `app.asar`.
 
-桌面版数据库在 `%LOCALAPPDATA%\ThickEarth\data\thick-earth.db`（不是 `%LOCALAPPDATA%\ThickEarth\thickearth.db`，后者是 `npm start` 留下的）。
+The desktop build keeps its database at `%LOCALAPPDATA%\ThickEarth\data\thick-earth.db`. The `%LOCALAPPDATA%\ThickEarth\thickearth.db` file belongs to `npm start`, not to the installed app.
 
 ---
 
-## 架构
+## Architecture
 
 ```
-shared/            前端后端共用，纯函数、无 IO
-  rules.js         规则引擎：建局、合法性、落子与回合记账、连六判定、结果
-  analysis.js      赛后分析：重放、棋型评估、关键节点、弱点、建议
-  ai.js            本地棋型 AI（候选点剪枝 + 威胁排序，确定性）
-  agent-protocol.js  LLM 提示词构造 + 严格响应解析（落子 / 教练报告 / 追问）
+shared/            shared by front end and backend, pure functions, no IO
+  rules.js         rules engine: setup, legality, placement and turn bookkeeping, six-in-a-row, result
+  analysis.js      post-game analysis: replay, shape scoring, key moments, weaknesses, advice
+  ai.js            local shape AI (candidate pruning + threat ordering, deterministic)
+  agent-protocol.js  LLM prompt construction + strict response parsing (moves / coach report / follow-ups)
 
 server/
-  index.js         启动入口，读环境变量
-  app.js           HTTP 应用工厂：路由、鉴权、错误映射
-  games.js         对局服务：建局、加入、提交、AI 轮转、视图投影
-  agent-seats.js   Agent 座位令牌 + 超时兜底调度
-  ai-settings.js   AI 提供方配置与配额
-  ai-provider.js   OpenAI 兼容 Chat Completions 适配器
-  coach.js         赛后报告与追问
-  db.js            SQLite 仓储层
-  realtime.js      SSE 广播
-  export.js        棋谱导出
-  playtest.js      试玩数据统计与 CSV
+  index.js         entry point, reads the environment
+  app.js           HTTP application factory: routes, auth, error mapping
+  games.js         game service: create, join, submit, AI rotation, view projection
+  agent-seats.js   agent seat tokens + deadline fallback scheduler
+  ai-settings.js   provider configuration and quotas
+  ai-provider.js   OpenAI-compatible Chat Completions adapter
+  coach.js         post-game report and follow-up questions
+  db.js            SQLite repository layer
+  realtime.js      SSE broadcast
+  export.js        game record export
+  playtest.js      playtest statistics and CSV
 
-web/               原生 ESM，无构建步骤
-  js/core/         路由、状态、i18n、DOM 工具
-  js/game/         19×19 棋盘渲染（星位、获胜连线高亮、键盘可达）
-  js/views/        各页面（建局、对局、回放、历史、分析、规则、设置）
+web/               native ESM, no build step
+  js/core/         router, state, i18n, DOM helpers
+  js/game/         19x19 board rendering (star points, winning line highlight, keyboard accessible)
+  js/views/        pages (setup, game, replay, history, analysis, rules, settings)
 ```
 
-**持久化设计**：一局存的是「初始状态 + 有序动作日志」，当前状态、结果、指标都是物化出来的派生数据。所以任何一局都能从日志完整重放，分析结果可复核，教练报告也被约束只能引用日志里存在的东西。
+**Persistence**: a game is stored as *initial state + ordered action log*. Current state, result and metrics are all materialised from it. That means any game can be replayed in full from its log, analysis results can be audited, and the coach is constrained to cite only what actually exists in the log.
 
-核心数据表：`games`（含 `initial_state` / `current_state` / `seats` / `result` / `metrics`）、`actions`、`users`、`ai_usage`、`coach_reports`。
-
----
-
-## 为什么单点威胁赢不了
-
-一回合两子，对手可以用第一子挡掉你唯一的威胁，剩下的子继续进攻。所以真正决定胜负的是**双威胁**：同时造出两条都需要应的线，一回合挡不完。
-
-本地 AI 的评分就建立在这一点上——沿四个方向算 run length × 开放端数，连五 / 活四 / 冲四 / 活三分档加权，再对对手的威胁做衰减惩罚（`DEFENCE_WEIGHT`）。分析引擎用同一套棋型定义，但每子贡献封顶在活四，避免一着五连把 swing 值全部顶到上限。
+Core tables: `games` (`initial_state` / `current_state` / `seats` / `result` / `metrics`), `actions`, `users`, `ai_usage`, `coach_reports`.
 
 ---
 
-## 三种 AI 形态
+## Why a single threat cannot win
 
-| 形态 | 怎么用 | 特点 |
+Each turn places two stones, so the opponent can use the first stone to block your only threat and still attack with the rest. What actually decides games is the **double threat**: two lines that both need an answer in the same turn, which one turn cannot cover.
+
+The local AI is scored on exactly that — run length × open ends along four axes, weighted by tier (five, open four, blocked four, open three), with a decayed penalty on the opponent's threats (`DEFENCE_WEIGHT`). The analysis engine uses the same shape definitions but caps each stone's contribution at an open four, so one five-in-a-row does not saturate every swing value.
+
+---
+
+## Three kinds of AI
+
+| Form | How to use it | Characteristics |
 |---|---|---|
-| 本地棋型 AI | 座位 `kind=ai, engine=local` | 进程内，毫秒级出招，离线可用，确定性（无随机） |
-| LLM 座位 | 座位 `kind=ai, engine=llm`，设置里填 provider | 每手构造提示词（规则摘要 + 棋盘图 + 剩余子数 + 合法点位），要求返回裸坐标；非法动作重试一次后回退本地 AI |
-| 外部 Agent | 座位 `kind=agent` | 服务端**不代打**，等外部提交；令牌 + 回合契约，适合接任意 Agent 运行时 |
+| Local shape AI | seat `kind=ai, engine=local` | in-process, answers in milliseconds, works offline, deterministic (no randomness) |
+| LLM seat | seat `kind=ai, engine=llm`, provider configured in settings | each move builds a prompt (rules summary + board diagram + remaining stones + legal points) and demands a bare coordinate; illegal replies are retried once, then fall back to the local AI |
+| External agent | seat `kind=agent` | the server **never plays for it**; it waits for an external submission. Token + turn contract, so any agent runtime fits |
 
-填 API Key 的位置在「设置 → AI 提供方」，支持 DeepSeek、阿里百炼、智谱、硅基流动、OpenAI 和自定义 OpenAI 兼容端点。注意：填完 Key 还要在开局时把座位引擎选成 `LLM` 才生效。
+The API key goes in Settings → AI provider, which supports DeepSeek, Alibaba Bailian, Zhipu, SiliconFlow, OpenAI and custom OpenAI-compatible endpoints. Note that filling in a key is not enough: the seat's engine also has to be set to `LLM` when the game is created.
 
-LLM 座位默认每次落子一次请求，每局上限 40 次、每月 500 次，超出自动降级到本地引擎。
+An LLM seat makes one request per stone by default, with a cap of 40 per game and 500 per month; beyond that it degrades to the local engine automatically.
 
-**云端 LLM 知道规则吗？** 知道，但只在你开 `LLM` 引擎的座位生效。规则不是靠模型"记住"的：每一手都由服务端把规则摘要、当前棋盘、本回合还差几子、全部合法点位重新拼进提示词，再严格解析返回的坐标。解析失败或坐标不合法就重试一次，仍失败则回退本地 AI——所以模型记不记得六子棋规则，都不影响对局合法性。
+**Does a cloud LLM know the rules?** Yes, but only for seats using the `LLM` engine. The rules are not something the model has to remember: for every move the server rebuilds the prompt from the rules summary, the current board, how many stones are still owed this turn and every legal point, then parses the returned coordinate strictly. A parse failure or an illegal coordinate triggers one retry, and then a fallback to the local AI — so whether or not the model remembers Connect6, the legality of the game is never at its mercy.
 
 ---
 
-## 接入自己的 Agent
+## Connecting your own agent
 
-三步，全程 HTTP，不限语言。
+Three steps, all HTTP, any language.
 
 ```bash
-# 1. 建一局，0 号座位留给 Agent（mode=arena 时两个座位都必须是 agent 或 ai）
+# 1. Create a game and leave seat 0 for the agent (in mode=arena both seats must be agent or ai)
 curl -s -X POST http://127.0.0.1:7788/api/games \
   -H 'Content-Type: application/json' \
   -d '{"mode":"arena","playerCount":2,
        "seats":[{"kind":"agent","name":"My Agent"},
                 {"kind":"ai","engine":"local"}]}'
 
-# 2. 领令牌（原文只返回一次）
+# 2. Claim the token (returned in full exactly once)
 curl -s -X POST http://127.0.0.1:7788/api/games/<gameId>/seats/0/token
 
-# 3. 拉局面 / 落子（一次落一子；本回合还差几子看 stonesRemainingThisTurn）
+# 3. Read the position / place a stone (one stone per call; check stonesRemainingThisTurn for how many are owed)
 curl -s -H "Authorization: Bearer <token>" http://127.0.0.1:7788/api/agent/game
 curl -s -X POST -H "Authorization: Bearer <token>" -H 'Content-Type: application/json' \
   -d '{"turnId":12,"action":{"type":"place","x":9,"y":9}}' \
   http://127.0.0.1:7788/api/agent/actions
 ```
 
-参考实现（无依赖，可直接跑完整一局）：
+A reference client (dependency-free, plays a whole game):
 
 ```bash
-node agents/example-client.mjs http://127.0.0.1:7788           # Agent vs 本地 AI
-node agents/example-client.mjs http://127.0.0.1:7788 --arena    # 双 Agent 互斗
+node agents/example-client.mjs http://127.0.0.1:7788           # agent vs local AI
+node agents/example-client.mjs http://127.0.0.1:7788 --arena    # agent vs agent
 ```
 
-完整契约见 [`docs/AGENT-SEAT.md`](docs/AGENT-SEAT.md)：鉴权、事件、错误码、超时语义。
+The full contract is in [`docs/AGENT-SEAT.md`](docs/AGENT-SEAT.md): auth, events, error codes, timeout semantics.
 
 ---
 
-## API 一览
+## API overview
 
-| 分组 | 端点 |
+| Group | Endpoints |
 |---|---|
-| 元信息 | `GET /api/config`、`GET /api/health` |
-| 账号（Web 模式） | `POST /api/auth/register`、`POST /api/auth/login`、`POST /api/auth/logout`、`GET /api/auth/me` |
-| 对局 | `GET/POST /api/games`、`POST /api/games/join`、`GET/DELETE /api/games/:id`、`POST /api/games/:id/start`、`POST /api/games/:id/actions`、`GET /api/games/:id/events`（SSE） |
-| 分析与教练 | `GET/POST /api/games/:id/analysis`、`GET/POST /api/games/:id/coach`、`POST /api/games/:id/coach/messages`、`POST /api/games/:id/hardest-decision` |
-| 导出 | `GET /api/games/:id/export?format=json\|md\|txt`、`GET /api/playtest/export?format=csv` |
-| AI 配置 | `GET/PUT /api/ai/settings`、`POST /api/ai/test`、`DELETE /api/ai/key` |
-| Agent 座位 | `POST /api/games/:id/seats/:seat/token`、`GET /api/agent/game`、`POST /api/agent/actions`、`GET /api/agent/events` |
+| Metadata | `GET /api/config`, `GET /api/health` |
+| Accounts (web mode) | `POST /api/auth/register`, `POST /api/auth/login`, `POST /api/auth/logout`, `GET /api/auth/me` |
+| Games | `GET/POST /api/games`, `POST /api/games/join`, `GET/DELETE /api/games/:id`, `POST /api/games/:id/start`, `POST /api/games/:id/actions`, `GET /api/games/:id/events` (SSE) |
+| Analysis and coaching | `GET/POST /api/games/:id/analysis`, `GET/POST /api/games/:id/coach`, `POST /api/games/:id/coach/messages`, `POST /api/games/:id/hardest-decision` |
+| Export | `GET /api/games/:id/export?format=json\|md\|txt`, `GET /api/playtest/export?format=csv` |
+| AI configuration | `GET/PUT /api/ai/settings`, `POST /api/ai/test`, `DELETE /api/ai/key` |
+| Agent seats | `POST /api/games/:id/seats/:seat/token`, `GET /api/agent/game`, `POST /api/agent/actions`, `GET /api/agent/events` |
 
-错误统一为 `{"error":{"code":"...","message":"..."}}`。
+Errors always look like `{"error":{"code":"...","message":"..."}}`.
 
 ---
 
-## 测试
+## Tests
 
 ```bash
-npm test          # 44 个用例
-npm run smoke     # 起真服务跑一局，再校核导出、分析、统计与静态资源
+npm test          # 44 cases
+npm run smoke     # starts a real server, plays a game, then checks export, analysis, stats and static assets
 ```
 
-`test/rules.test.mjs` 覆盖连六判定、首手一子、回合内两子记账、终局后拒绝落子、坐标往返。
-`test/analysis.test.mjs` 覆盖分析输出契约、漏杀/漏挡识别、进行中局面、损坏日志截断。
-`test/ai.test.mjs` 覆盖 AI 合法性、确定性、能抓住连六机会。
-`test/agent-seat.test.mjs` 覆盖令牌缺失/伪造/跨局隔离、`STALE_TURN` 拦截、超时兜底、Agent 打完整一局、arena 双 Agent、各模式座位组合校验。
-`test/web.test.mjs` 是前端守卫：中英文案键必须一一对应、`t()` 引用的键必须存在、视图里不能残留扎营/召回/弃权词汇、棋盘必须是 19 路且带星位与获胜连线。
+`test/rules.test.mjs` covers six-in-a-row detection, the single opening stone, per-turn stone bookkeeping, rejection of moves after the game ends, and coordinate round-trips.
+`test/analysis.test.mjs` covers the analysis output contract, missed wins and missed blocks, in-progress positions, and truncation of a corrupted log.
+`test/ai.test.mjs` covers AI legality, determinism, and taking a six-in-a-row when it is available.
+`test/agent-seat.test.mjs` covers missing and forged tokens, cross-game isolation, `STALE_TURN` rejection, deadline fallback, an agent playing a full game, agent vs agent in arena, and seat validation per mode.
+`test/web.test.mjs` guards the front end: the Chinese and English key sets must match, every `t()`-referenced key must exist, no territory-era vocabulary (camping, recall, pass) may survive in a view, and the board must be 19x19 with star points and a winning-line highlight.
 
 ---
 
-## 几个刻意的取舍
+## Deliberate trade-offs
 
-**为什么用 `turnId` 而不是裸提交**：Agent 是异步的，可能超时重试、可能两个 worker 抢同一个令牌。用 `state.seq` 当回合号，提交不匹配就 `409 STALE_TURN`，宁可让它重读局面，也不让一招落在它没见过的棋盘上。
+**Why `turnId` instead of a bare submission**: agents are asynchronous — they retry after timeouts, and two workers may race for the same token. Using `state.seq` as the turn number means a mismatched submission gets `409 STALE_TURN`. Better to make the agent re-read the position than to let a move land on a board it has never seen.
 
-**为什么一回合拆成两次决策**：规则要求「每次 AI 决策对应一颗落子」，所以引擎用 `placedThisTurn` 记账，落满 2 子才换手。这样 Agent 协议、AI、分析三处共用同一个决策边界，不需要任何特例。
+**Why a turn is split into two decisions**: the rules require *one AI decision, one stone*, so the engine tracks `placedThisTurn` and only hands over once two stones are down. That way the agent protocol, the AI and the analysis all share one decision boundary, with no special cases.
 
-**为什么有超时兜底**：外部进程会挂。没有兜底，一个卡死的 Agent 能把整局冻住。到期用本地 AI 代打并记 `fallbackCount`，评测时可以据此剔除被污染的局。
+**Why there is a deadline fallback**: external processes hang. Without a fallback, one stuck agent freezes the whole game. When the deadline passes the local AI plays the move and `fallbackCount` is recorded, so polluted games can be filtered out during evaluation.
 
-**为什么没做"超时判负"**：规则里没有"淘汰座位"这个概念，硬加等于产品里同时存在两套规则。宁可让数据可清洗，也不让规则分叉。
+**Why there is no "timeout loses" rule**: the rules have no concept of an eliminated seat, so adding one would put two rule sets in the same product. Better to keep the data cleanable than to fork the rules.
 
-**为什么零依赖**：`node:sqlite`、`node:crypto`、`node:http` 够用了。没有 `node_modules`，没有构建步骤，克隆下来就能跑，也给评测环境省事。代码也不依赖本地长连接或后台常驻服务——服务端是一个普通 HTTP 进程，Agent 侧是轮询式客户端，可以直接迁移到评测环境。
+**Why zero dependencies**: `node:sqlite`, `node:crypto` and `node:http` are enough. No `node_modules`, no build step — clone and run, which also makes life easier for the evaluation environment. Nothing depends on a local long-lived connection or a background daemon either: the server is an ordinary HTTP process and the agent is a polling client, so both move to the evaluation environment unchanged.
 
 ---
 
-## 已知限制
+## Known limitations
 
-- `online` 模式把座位绑在用户会话上，不支持 Agent 令牌。
-- API 不返回 CORS 头，浏览器里跑的 Agent 会被同源策略拦住；Agent 请作为本地进程运行。
-- AI 提供方的响应格式限定 OpenAI 兼容的 Chat Completions。
-- 本地 AI 是棋型启发式，不是搜索型引擎；强于随机但打不过正经六子棋程序。
+- `online` mode binds seats to user sessions and does not support agent tokens.
+- The API sends no CORS headers, so an agent running in a browser is blocked by the same-origin policy; run agents as local processes.
+- AI providers are limited to OpenAI-compatible Chat Completions.
+- The local AI is a shape heuristic, not a search engine: stronger than random, weaker than a serious Connect6 program.
