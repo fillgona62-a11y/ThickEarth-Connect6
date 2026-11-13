@@ -13,7 +13,7 @@
 import { AiProviderError } from "./errors.js";
 
 export const AI_PRESETS = Object.freeze([
-  { id: "deepseek", label: "DeepSeek", labelZh: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-chat" },
+  { id: "deepseek", label: "DeepSeek", labelZh: "DeepSeek", baseUrl: "https://api.deepseek.com/v1", model: "deepseek-flash" },
   { id: "bailian", label: "Alibaba Bailian (Qwen)", labelZh: "阿里百炼（Qwen）", baseUrl: "https://dashscope.aliyuncs.com/compatible-mode/v1", model: "qwen-plus" },
   { id: "zhipu", label: "Zhipu GLM", labelZh: "智谱 GLM", baseUrl: "https://open.bigmodel.cn/api/paas/v4", model: "glm-4-flash" },
   { id: "siliconflow", label: "SiliconFlow", labelZh: "硅基流动", baseUrl: "https://api.siliconflow.cn/v1", model: "Qwen/Qwen2.5-7B-Instruct" },

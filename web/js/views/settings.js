@@ -336,12 +336,19 @@ export async function mount(container, route) {
   function aiStatusRow() {
     const settings = aiState.settings || {};
     const configured = Boolean(settings.configured);
+    // "Not configured" covers two very different situations, and telling them
+    // apart is the difference between "go flip the switch" and "go fill a field".
+    const ready = Boolean(aiForm.baseUrl.trim() && aiForm.model.trim()
+      && (aiForm.apiKey.trim() || settings.hasKey));
+    const statusKey = configured ? 'settingsAi.configured'
+      : !aiForm.enabled && ready ? 'settingsAi.notEnabled'
+        : 'settingsAi.notConfigured';
     const usage = settings.usage || {};
     return h('div', { class: 'ai-status-row' },
       h('div', { class: 'row', style: { gap: '8px', flexWrap: 'wrap' } },
         h('span', { class: 'badge ' + (configured ? 'badge--ok' : 'badge--warn') },
           configured ? icon('check', 12) : icon('alert', 12),
-          configured ? t('settingsAi.configured') : t('settingsAi.notConfigured')
+          t(statusKey)
         ),
         settings.hasKey
           ? h('span', { class: 'badge badge--muted mono' }, t('settingsAi.keyChip', { hint: settings.keyHint || '----' }))
