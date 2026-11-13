@@ -10,6 +10,8 @@ DATA_DIR=/var/lib/thickearth
 REPO=https://github.com/fillgona62-a11y/ThickEarth-Connect6.git
 
 # Detect the public address automatically; override with PUBLIC_ORIGIN=http://x.x.x.x
+# (recommended: some cloud hosts cannot reach ifconfig.me and would fall back
+# to 127.0.0.1, which breaks the Origin check for every POST).
 PUBLIC_IP=$(curl -fsS --max-time 4 ifconfig.me 2>/dev/null || true)
 ORIGIN="${PUBLIC_ORIGIN:-http://${PUBLIC_IP:-127.0.0.1}}"
 
@@ -65,11 +67,15 @@ log "nginx config"
 [ -f /etc/nginx/conf.d/default.conf ] && \
   mv -f /etc/nginx/conf.d/default.conf /etc/nginx/conf.d/default.conf.disabled-thickearth
 cp -n /etc/nginx/nginx.conf /etc/nginx/nginx.conf.bak-thickearth 2>/dev/null || true
-if grep -qE 'listen[[:space:]]+80[[:space:]]+default_server' /etc/nginx/nginx.conf; then
-  sed -i -e 's/listen[[:space:]]\+80 default_server;/listen 8081 default_server;/' \
-         -e 's/listen[[:space:]]\+\[::\]:80 default_server;/listen [::]:8081 default_server;/' \
-         /etc/nginx/nginx.conf
-fi
+# Two spellings occur in the wild: "listen 80 default_server;" and a plain
+# "listen 80;" (OpenCloudOS 9.6 uses the latter). Move either one to 8081 so
+# our conf.d/thickearth.conf is the only server on port 80.
+sed -i \
+  -e 's/listen\([[:space:]]\+\)80 default_server;/listen\18081 default_server;/' \
+  -e 's/listen\([[:space:]]\+\)\[::\]:80 default_server;/listen\1[::]:8081 default_server;/' \
+  -e 's/^\([[:space:]]*\)listen\([[:space:]]\+\)80;[[:space:]]*$/\1listen 8081;/' \
+  -e 's/^\([[:space:]]*\)listen\([[:space:]]\+\)\[::\]:80;[[:space:]]*$/\1listen [::]:8081;/' \
+  /etc/nginx/nginx.conf
 cp "$APP_DIR/deploy/nginx-http.conf" /etc/nginx/conf.d/thickearth.conf
 
 log "Firewall and SELinux"
