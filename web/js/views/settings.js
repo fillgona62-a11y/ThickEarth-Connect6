@@ -169,6 +169,22 @@ export async function mount(container, route) {
 
   async function testAiConnection() {
     if (aiState.testing) return;
+    // Name the empty fields up front. The server can only say "not configured",
+    // which reads as "I already typed the key" when the model or URL is the gap.
+    const missing = [];
+    if (!aiForm.baseUrl.trim()) missing.push(t('settingsAi.baseUrl'));
+    if (!aiForm.model.trim()) missing.push(t('settingsAi.model'));
+    if (!aiForm.apiKey.trim() && !(aiState.settings && aiState.settings.hasKey)) {
+      missing.push(t('settingsAi.apiKey'));
+    }
+    if (missing.length > 0) {
+      aiState.testResult = {
+        ok: false,
+        text: t('settingsAi.testMissing', { fields: missing.join(t('common.listSeparator')) })
+      };
+      render();
+      return;
+    }
     aiState.testing = true;
     aiState.testResult = null;
     render();
