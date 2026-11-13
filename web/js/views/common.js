@@ -27,11 +27,27 @@ export function letterDot(seat, player) {
   }, seatLetter(seat));
 }
 
+/**
+ * Old games created with the default AI name say "Local engine" even when the
+ * seat actually ran the LLM. Show the real engine in that case, and keep any
+ * name the player typed themselves.
+ */
+const LEGACY_LOCAL_NAMES = ['本地引擎', 'Local engine'];
+
+export function seatDisplayName(player) {
+  const fallback = t('game.seatN', { n: (player && player.seat !== undefined ? player.seat : 0) + 1 });
+  const name = player && player.name ? player.name : fallback;
+  if (player && player.engine === 'llm' && LEGACY_LOCAL_NAMES.includes(name)) {
+    return t('engine.llmShort');
+  }
+  return name;
+}
+
 export function seatDot(seat, player) {
   const color = (player && player.color) || seatColor(seat);
   return h('span', { class: 'seat-badge seat-badge--' + color },
     h('span', { class: 'seat-badge-letter', 'aria-hidden': 'true' }, seatLetter(seat)),
-    h('span', { class: 'seat-badge-name' }, player && player.name ? player.name : t('game.seatN', { n: seat + 1 }))
+    h('span', { class: 'seat-badge-name' }, seatDisplayName(player))
   );
 }
 

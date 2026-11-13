@@ -156,7 +156,12 @@ export async function mount(container, route) {
   function seatPayload() {
     return state.seats.map((seat, index) => {
       const kind = normalizeKind(seat.kind, state.mode, index);
-      const name = seat.name.trim() || t(kind === 'ai' ? 'setup.presetAi' : kind === 'agent' ? 'setup.presetAgent' : 'setup.presetPlayer', { n: index + 1 });
+      const defaultName = kind === 'human'
+        ? t('setup.presetPlayer', { n: index + 1 })
+        : kind === 'ai'
+          ? (seat.engine === 'llm' ? t('engine.llm') : t('setup.presetAi'))
+          : t('setup.presetAgent');
+      const name = seat.name.trim() || defaultName;
       const payload = { name: name, kind: kind };
       if (kind === 'ai') {
         payload.difficulty = seat.difficulty;
@@ -268,7 +273,9 @@ export async function mount(container, route) {
       type: 'text',
       maxlength: 32,
       value: seat.name,
-      placeholder: t(isAi ? 'setup.presetAi' : isAgent ? 'setup.presetAgent' : 'setup.presetPlayer', { n: index + 1 }),
+      placeholder: isAi
+        ? (seat.engine === 'llm' ? t('engine.llm') : t('setup.presetAi'))
+        : isAgent ? t('setup.presetAgent') : t('setup.presetPlayer', { n: index + 1 }),
       'aria-label': t('setup.seatLabel', { letter: seatLetter(index) }) + ' · ' + t('setup.nameLabel'),
       oninput: (event) => {
         state.seats[index].name = event.target.value;

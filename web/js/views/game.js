@@ -33,7 +33,8 @@ import {
   winnerLabel,
   gameFinishMeta,
   humanKey,
-  listOfStrings
+  listOfStrings,
+  seatDisplayName
 } from './common.js';
 
 function playerColor(player) {
@@ -559,7 +560,7 @@ export async function mount(container, route) {
       if (player.fallbackCount) meta.push(t('game.agentFallback', { n: player.fallbackCount }));
       return h('div', { style: { marginBottom: '10px' } },
         h('div', { class: 'kv-row' },
-          h('span', { class: 'kv-key' }, seatLetter(player.seat) + ' · ' + player.name),
+          h('span', { class: 'kv-key' }, seatLetter(player.seat) + ' · ' + seatDisplayName(player)),
           h('span', { class: 'kv-value faint' }, meta.filter(Boolean).join(' · '))
         ),
         token
@@ -688,7 +689,7 @@ export async function mount(container, route) {
         h('span', { class: 'game-panel-title' }, icon('swords', 13), t('common.turn')),
         player ? h('span', { class: 'seat-badge seat-badge--' + playerColor(player) },
           h('span', { class: 'seat-badge-letter', 'aria-hidden': 'true' }, seatLetter(player.seat)),
-          h('span', { class: 'seat-badge-name' }, player.name)
+          h('span', { class: 'seat-badge-name' }, seatDisplayName(player))
         ) : null
       ),
       h('div', { class: 'game-panel-body' }, h('div', { class: 'stack-12' }, children))
@@ -697,7 +698,7 @@ export async function mount(container, route) {
 
   function seatNameFor(seat) {
     const players = (uiState.game && uiState.game.players) || [];
-    return (players[seat] && players[seat].name) || t('game.seatN', { n: seat + 1 });
+    return players[seat] ? seatDisplayName(players[seat]) : t('game.seatN', { n: seat + 1 });
   }
 
   function buildNoteForm() {
