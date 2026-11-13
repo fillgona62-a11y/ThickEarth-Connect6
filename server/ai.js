@@ -10,6 +10,11 @@ import { createLazyModule } from "./module-loader.js";
 
 export const DEFAULT_TIME_BUDGET_MS = 600;
 
+// Playing strength is explicitly secondary to responsiveness here. A move call
+// gets one short round-trip; anything slower falls back to the local engine.
+export const LLM_MOVE_TIMEOUT_MS = Number(process.env.THICK_EARTH_LLM_MOVE_TIMEOUT_MS) || 2500;
+export const LLM_MOVE_MAX_TOKENS = 256;
+
 function defaultImport() {
   return import("../shared/ai.js");
 }
@@ -71,7 +76,8 @@ export function createLlmMoveEngine({ protocol, logger = null, maxAttempts = 2 }
         completion = await provider.complete({
           messages,
           kind: "move",
-          maxTokens: 400,
+          maxTokens: LLM_MOVE_MAX_TOKENS,
+          timeoutMs: LLM_MOVE_TIMEOUT_MS,
           mockContext: { legalActions, seat }
         });
       } catch (error) {
@@ -87,7 +93,54 @@ export function createLlmMoveEngine({ protocol, logger = null, maxAttempts = 2 }
     return { action: null, attempts: maxAttempts, invalid: true };
   }
 
-  return { choose };
+  /**
+   * Ask for both stones of a Connect6 turn in ONE provider round-trip.
+   * Connect6 places two stones per turn, so calling choose() twice per turn
+   * doubles the network latency for no benefit — the second stone only needs to
+   * be a different legal point. The caller still applies and validates each
+   * stone separately through shared/rules.js.
+   */
+  async function chooseTurn(state, { seat = state.currentSeat, provider, beforeCall = null, onProviderCall = null } = {}) {
+    const legalActions = getLegalActions(state);
+    if (legalActions.length < 2) return [];
+    const context = { state, legalActions, seat };
+    let previousText = "";
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      if (typeof beforeCall === "function" && (await beforeCall(attempt)) === false) return [];
+      const base = await protocol.buildTurnMessages(context);
+      const messages = attempt === 1
+        ? base
+        : [...base,
+            { role: "assistant", content: previousText },
+            { role: "user", content: "That reply did not contain two distinct legal points. Reply with exactly one JSON object: {\"actions\":[{\"type\":\"place\",\"x\":9,\"y\":9},{\"type\":\"place\",\"x\":10,\"y\":9}],\"reason\":\"short reason\"}." }];
+      let completion;
+      try {
+        completion = await provider.complete({
+          messages,
+          kind: "move",
+          maxTokens: LLM_MOVE_MAX_TOKENS,
+          timeoutMs: LLM_MOVE_TIMEOUT_MS,
+          mockContext: { legalActions, seat }
+        });
+      } catch (error) {
+        logger?.warn?.("LLM turn provider call failed; using the local engine. (" + (error?.message ?? error) + ")");
+        return [];
+      }
+      if (typeof onProviderCall === "function") await onProviderCall(completion, attempt);
+      const actions = await protocol.parseTurnResponse(completion.text, { state, legalActions });
+      if (process.env.THICK_EARTH_LLM_DEBUG === "1") {
+        logger?.warn?.("LLM turn raw reply: " + String(completion.text).slice(0, 600));
+      }
+      // One usable point is still better than nothing: the caller places it and
+      // fills the missing stone locally. Strength is explicitly secondary.
+      if (actions.length > 0) return actions;
+      previousText = completion.text;
+      logger?.warn?.("LLM returned no usable turn stone (attempt " + attempt + "); retrying.");
+    }
+    return [];
+  }
+
+  return { choose, chooseTurn };
 }
 
 function matchLegalAction(legal, action) {

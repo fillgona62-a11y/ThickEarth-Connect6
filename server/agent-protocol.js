@@ -252,6 +252,34 @@ function localBuildMoveMessages({ state, legalActions, seat }) {
   ];
 }
 
+function localBuildTurnMessages(input) {
+  const messages = localBuildMoveMessages(input);
+  messages[0] = {
+    role: "system",
+    content: MOVE_SYSTEM_PROMPT
+      + "\nFor this turn reply with {\"actions\":[{\"type\":\"place\",\"x\":0,\"y\":0},{\"type\":\"place\",\"x\":1,\"y\":0}]} holding TWO distinct legal empty points."
+  };
+  return messages;
+}
+
+function localParseTurnResponse(text, { legalActions = [] } = {}) {
+  const parsed = extractJson(text);
+  if (!parsed) return [];
+  const list = Array.isArray(parsed)
+    ? parsed
+    : (parsed && typeof parsed === "object" && Array.isArray(parsed.actions) ? parsed.actions : [parsed]);
+  const out = [];
+  const seen = new Set();
+  for (const raw of list) {
+    const action = matchLegalAction(legalActions, candidateFromValue(raw));
+    if (!action || seen.has(action.x + "," + action.y)) continue;
+    seen.add(action.x + "," + action.y);
+    out.push(action);
+    if (out.length === 2) break;
+  }
+  return out;
+}
+
 function localBuildMoveRepairMessages({ state, legalActions, seat, previousText }) {
   const messages = localBuildMoveMessages({ state, legalActions, seat });
   messages.push({ role: "assistant", content: clampText(previousText, 800) });
@@ -360,6 +388,27 @@ export function createAgentProtocol({ importModule = defaultImport, logger = nul
     return prefer("buildMoveMessages", [input], () => localBuildMoveMessages(input));
   }
 
+  async function buildTurnMessages(input) {
+    return prefer("buildTurnMessages", [input], () => localBuildTurnMessages(input));
+  }
+
+  async function parseTurnResponse(text, context) {
+    const shared = await sharedModule();
+    if (typeof shared?.parseTurnResponse === "function") {
+      try {
+        const list = await shared.parseTurnResponse(text, context);
+        if (Array.isArray(list) && list.length > 0) {
+          return list
+            .map((item) => matchLegalAction(context.legalActions, candidateFromValue(item)))
+            .filter(Boolean);
+        }
+      } catch (error) {
+        logger?.warn?.("shared/agent-protocol.js parseTurnResponse failed; using the local fallback. (" + (error?.message ?? error) + ")");
+      }
+    }
+    return localParseTurnResponse(text, context);
+  }
+
   async function buildMoveRepairMessages(input) {
     const shared = await sharedModule();
     if (typeof shared?.buildMoveRepairMessages === "function") {
@@ -420,6 +469,8 @@ export function createAgentProtocol({ importModule = defaultImport, logger = nul
   return {
     version: AGENT_PROTOCOL_VERSION,
     buildMoveMessages,
+    buildTurnMessages,
+    parseTurnResponse,
     buildMoveRepairMessages,
     parseMoveResponse,
     buildCoachReportMessages,

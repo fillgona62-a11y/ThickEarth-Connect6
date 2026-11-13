@@ -134,7 +134,7 @@ export function createApplication(options = {}) {
     ...providerOptions,
     ...overrides
   });
-  const llmEngine = createLlmMoveEngine({ protocol: agentProtocol, logger });
+  const llmEngine = createLlmMoveEngine({ protocol: agentProtocol, logger, maxAttempts: 1 });
 
   const auth = createAuthService({ repositories, sessionTtlMs, logger });
   const loginLimiter = createLoginRateLimiter({
@@ -362,7 +362,9 @@ export function createApplication(options = {}) {
     if (!body || typeof body !== "object" || body.action === undefined) {
       throw new HttpError(400, "INVALID_ACTION", "Request body must contain an action.");
     }
-    const row = await games.submitAction(gameId, user, body.action);
+    const row = await games.submitAction(gameId, user, body.action, {
+      onProgress: () => broadcastGameState(gameId)
+    });
     broadcastGameState(row.id);
     sendJson(ctx.res, 200, { game: games.buildGameView(row, user) });
   }

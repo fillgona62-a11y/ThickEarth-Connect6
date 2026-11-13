@@ -6,6 +6,8 @@ set "APP_MODE=desktop"
 set "HOST=127.0.0.1"
 set "PORT=8787"
 
+if exist "%LOCALAPPDATA%\ThickEarth\data\thick-earth.db" set "DB_PATH=%LOCALAPPDATA%\ThickEarth\data\thick-earth.db"
+
 where node >nul 2>nul
 if errorlevel 1 (
   echo [ERROR] Node.js not found on PATH. Install Node 22.5 or newer first.

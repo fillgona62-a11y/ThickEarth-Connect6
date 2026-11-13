@@ -60,7 +60,7 @@ git clone https://github.com/fillgona62-a11y/ThickEarth-Connect6.git
 cd ThickEarth-Connect6
 ```
 
-No Git? Open the repo page, click the green **Code** button, choose **Download ZIP**, then unzip it. On Windows you can double-click `start.bat` instead of typing anything: it checks that Node is on `PATH`, starts the server on port 8787, and opens the browser.
+No Git? Open the repo page, click the green **Code** button, choose **Download ZIP**, then unzip it. On Windows you can double-click `start.bat` instead of typing anything: it checks that Node is on `PATH`, starts the server on port 8787, and opens the browser. For a silent launch with no console window, use `launch.pyw`; it also points `DB_PATH` at the installed app's database so existing AI settings are not lost.
 
 Then, with Node 22.5 or newer:
 
@@ -242,7 +242,9 @@ npm run smoke     # starts a real server, plays a game, then checks export, anal
 
 **Why `turnId` instead of a bare submission**: agents are asynchronous — they retry after timeouts, and two workers may race for the same token. Using `state.seq` as the turn number means a mismatched submission gets `409 STALE_TURN`. Better to make the agent re-read the position than to let a move land on a board it has never seen.
 
-**Why a turn is split into two decisions**: the rules require *one AI decision, one stone*, so the engine tracks `placedThisTurn` and only hands over once two stones are down. That way the agent protocol, the AI and the analysis all share one decision boundary, with no special cases.
+**Why a turn is still split into two decisions**: the rules require *one decision, one stone*, so the engine tracks `placedThisTurn` and only hands over once two stones are down. For LLM seats both stones are requested in a single provider call, then applied and validated one at a time — the decision boundary stays intact while the network round-trips are halved.
+
+**Why LLM moves favour speed over strength**: a move call gets `thinking: {"type": "disabled"}` on DeepSeek, a 256-token budget and a 2.5 s hard timeout (`THICK_EARTH_LLM_MOVE_TIMEOUT_MS`). If the reply is late, empty or malformed, the local AI plays instead. Playing strength is deliberately secondary to keeping the board responsive; `THICK_EARTH_LLM_DEBUG=1` logs raw replies when diagnosing a provider.
 
 **Why there is a deadline fallback**: external processes hang. Without a fallback, one stuck agent freezes the whole game. When the deadline passes the local AI plays the move and `fallbackCount` is recorded, so polluted games can be filtered out during evaluation.
 

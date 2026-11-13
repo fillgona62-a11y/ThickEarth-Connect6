@@ -254,8 +254,13 @@ export function createProvider(settings, {
   const apiKey = String(settings?.apiKey ?? "");
   const mocked = isMockMode(settings, env);
   const providerName = String(settings?.provider ?? "custom");
+  // DeepSeek turns thinking ON by default (effort high), and max_tokens covers
+  // the chain of thought too. On a short move request all tokens go to
+  // reasoning_content and `content` comes back empty. Only move calls need the
+  // fast path; coach reports still benefit from thinking.
+  const thinkingSwitch = /api\.deepseek\.com/i.test(baseUrl);
 
-  async function complete({ messages, kind = "generic", maxTokens = null, temperature = null, mockContext = null }) {
+  async function complete({ messages, kind = "generic", maxTokens = null, temperature = null, mockContext = null, timeoutMs: callTimeoutMs = null }) {
     const cleanMessages = sanitizeMessages(messages);
     if (cleanMessages.length === 0) {
       throw new AiProviderError("AI_INVALID_REQUEST", "Provider request has no usable messages.");
@@ -263,7 +268,8 @@ export function createProvider(settings, {
     if (mocked) return mockCompletion({ messages: cleanMessages, kind, model, mockContext });
     const startedAt = Date.now();
     const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    const budget = Number.isFinite(callTimeoutMs) && callTimeoutMs > 0 ? callTimeoutMs : timeoutMs;
+    const timer = setTimeout(() => controller.abort(), budget);
     let response;
     try {
       response = await fetchImpl(baseUrl + "/chat/completions", {
@@ -277,7 +283,8 @@ export function createProvider(settings, {
           messages: cleanMessages,
           temperature: temperature ?? (Number.isFinite(settings?.temperature) ? settings.temperature : 0.2),
           max_tokens: maxTokens ?? (Number.isInteger(settings?.maxOutputTokens) ? settings.maxOutputTokens : 1200),
-          stream: false
+          stream: false,
+          ...(thinkingSwitch && kind === "move" ? { thinking: { type: "disabled" } } : {})
         }),
         signal: controller.signal
       });
@@ -306,9 +313,14 @@ export function createProvider(settings, {
     } catch {
       throw new AiProviderError("AI_INVALID_RESPONSE", "The AI provider returned a non-JSON response.");
     }
-    const content = payload?.choices?.[0]?.message?.content;
+    const message = payload?.choices?.[0]?.message;
+    const content = message?.content;
     if (typeof content !== "string" || content.trim().length === 0) {
-      throw new AiProviderError("AI_INVALID_RESPONSE", "The AI provider returned an empty response.");
+      const choice = payload?.choices?.[0] ?? {};
+      const reasoning = typeof message?.reasoning_content === "string" && message.reasoning_content.length > 0;
+      throw new AiProviderError("AI_INVALID_RESPONSE",
+        "The AI provider returned an empty response. (finish_reason=" + (choice.finish_reason ?? "unknown")
+        + ", reasoning=" + reasoning + ", completion_tokens=" + (payload?.usage?.completion_tokens ?? "?") + ")");
     }
     return {
       text: content,

@@ -60,7 +60,7 @@ git clone https://github.com/fillgona62-a11y/ThickEarth-Connect6.git
 cd ThickEarth-Connect6
 ```
 
-没装 Git？打开仓库页面，点绿色的 **Code** 按钮选 **Download ZIP**，解压即可。Windows 上可以直接双击 `start.bat`，不用敲命令：它会先检查 Node 是否在 `PATH` 里，然后在 8787 端口起服务并打开浏览器。
+没装 Git？打开仓库页面，点绿色的 **Code** 按钮选 **Download ZIP**，解压即可。Windows 上可以直接双击 `start.bat`，不用敲命令：它会先检查 Node 是否在 `PATH` 里，然后在 8787 端口起服务并打开浏览器。想要无黑窗的静默启动，用 `launch.pyw`（桌面快捷方式指向它）；它会把 `DB_PATH` 指到已安装桌面版的数据库，已有 AI 配置不会丢。
 
 之后，需要 Node 22.5 或更新版本：
 
@@ -242,7 +242,9 @@ npm run smoke     # 起真服务跑一局，再校核导出、分析、统计与
 
 **为什么用 `turnId` 而不是裸提交**：Agent 是异步的，可能超时重试、可能两个 worker 抢同一个令牌。用 `state.seq` 当回合号，提交不匹配就 `409 STALE_TURN`，宁可让它重读局面，也不让一招落在它没见过的棋盘上。
 
-**为什么一回合拆成两次决策**：规则要求「每次 AI 决策对应一颗落子」，所以引擎用 `placedThisTurn` 记账，落满 2 子才换手。这样 Agent 协议、AI、分析三处共用同一个决策边界，不需要任何特例。
+**为什么一回合仍拆成两次决策**：规则要求「每次决策对应一颗落子」，所以引擎用 `placedThisTurn` 记账，落满 2 子才换手。LLM 座位改成一次调用把两颗子一起要回来，再逐颗校验落盘——决策边界不变，网络往返减半。
+
+**为什么 LLM 落子偏速度而非棋力**：落子请求在 DeepSeek 上带 `thinking: {"type": "disabled"}`，输出预算 256 token，硬超时 2.5 秒（可用 `THICK_EARTH_LLM_MOVE_TIMEOUT_MS` 调整）。超时、空响应、格式不对，一律本地 AI 接管。棋力被刻意放在响应速度之后；排查提供方时开 `THICK_EARTH_LLM_DEBUG=1` 可打印原始回复。
 
 **为什么有超时兜底**：外部进程会挂。没有兜底，一个卡死的 Agent 能把整局冻住。到期用本地 AI 代打并记 `fallbackCount`，评测时可以据此剔除被污染的局。
 

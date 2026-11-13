@@ -270,18 +270,8 @@ export function createGameService({
     });
   }
 
-  async function tryLlmSeatMove(row, state, seat) {
-    if (!aiSettings || !llmEngine || !providerFactory) return null;
+  function llmCallContext(row, settings) {
     const ownerId = row.ownerUserId;
-    const settings = aiSettings.getForMove(ownerId);
-    if (!settings) return null;
-    let provider;
-    try {
-      provider = providerFactory(settings);
-    } catch (error) {
-      logger?.warn?.("The LLM provider could not be created; using the local engine. (" + (error?.message ?? error) + ")");
-      return null;
-    }
     const beforeCall = () => {
       const gameCalls = repositories.countAiUsage(ownerId, row.id, "move");
       if (gameCalls >= settings.maxMovesPerGame) {
@@ -306,8 +296,30 @@ export function createGameService({
         outputTokens: completion.usage?.outputTokens ?? 0
       });
     };
+    return { beforeCall, onProviderCall };
+  }
+
+  function llmProviderFor(ownerId) {
+    const settings = aiSettings.getForMove(ownerId);
+    if (!settings) return null;
     try {
-      const result = await llmEngine.choose(state, { seat, provider, beforeCall, onProviderCall });
+      return { settings, provider: providerFactory(settings) };
+    } catch (error) {
+      logger?.warn?.("The LLM provider could not be created; using the local engine. (" + (error?.message ?? error) + ")");
+      return null;
+    }
+  }
+
+  async function tryLlmSeatMove(row, state, seat) {
+    if (!aiSettings || !llmEngine || !providerFactory) return null;
+    const resolved = llmProviderFor(row.ownerUserId);
+    if (!resolved) return null;
+    try {
+      const result = await llmEngine.choose(state, {
+        seat,
+        provider: resolved.provider,
+        ...llmCallContext(row, resolved.settings)
+      });
       return result?.action ?? null;
     } catch (error) {
       logger?.warn?.("The LLM seat move failed; using the local engine. (" + (error?.message ?? error) + ")");
@@ -315,10 +327,28 @@ export function createGameService({
     }
   }
 
-  async function chooseAiSeatAction(row, state, seat, { timeBudgetMs } = {}) {
+  /** One provider call for both stones of a turn. Returns [first, second] or null. */
+  async function tryLlmSeatTurn(row, state, seat) {
+    if (!aiSettings || !llmEngine || !providerFactory) return null;
+    const resolved = llmProviderFor(row.ownerUserId);
+    if (!resolved) return null;
+    try {
+      const actions = await llmEngine.chooseTurn(state, {
+        seat,
+        provider: resolved.provider,
+        ...llmCallContext(row, resolved.settings)
+      });
+      return actions.length > 0 ? actions : null;
+    } catch (error) {
+      logger?.warn?.("The LLM two-stone turn failed; falling back to per-stone calls. (" + (error?.message ?? error) + ")");
+      return null;
+    }
+  }
+
+  async function chooseAiSeatAction(row, state, seat, { timeBudgetMs, skipLlm = false } = {}) {
     const seatConfig = row.seats[seat] ?? {};
     const difficulty = seatConfig.difficulty ?? "normal";
-    if (seatConfig.engine === "llm") {
+    if (!skipLlm && seatConfig.engine === "llm") {
       const llmAction = await tryLlmSeatMove(row, state, seat);
       if (llmAction) return llmAction;
     }
@@ -329,7 +359,21 @@ export function createGameService({
     });
   }
 
-  async function advanceAi(gameId, { timeBudgetMs } = {}) {
+  async function advanceAi(gameId, { timeBudgetMs, onProgress = null } = {}) {
+    // A two-stone turn is fetched in one LLM call; the second stone waits here
+    // until the first has been applied and re-validated against the new board.
+    let pending = null;
+    // If the batched call times out, the rest of this turn must NOT fall back to
+    // two more per-stone LLM calls — that would be slower than doing nothing.
+    let llmFailedTurn = null;
+    const report = () => {
+      if (typeof onProgress !== "function") return;
+      try {
+        onProgress();
+      } catch (error) {
+        logger?.warn?.("AI progress broadcast failed. (" + (error?.message ?? error) + ")");
+      }
+    };
     for (let step = 0; step < MAX_AI_ACTIONS; step += 1) {
       const row = getRow(gameId);
       if (row.status === "finished" || row.currentState.phase === PHASES.FINISHED) return;
@@ -337,7 +381,42 @@ export function createGameService({
       const currentSeat = state.currentSeat;
       const current = currentSeat === null ? null : state.players[currentSeat];
       if (!current || current.kind !== "ai") return;
-      const action = await chooseAiSeatAction(row, state, currentSeat, { timeBudgetMs });
+
+      let action = null;
+      if (pending && pending.seat === currentSeat && pending.expectedSeq === state.seq) {
+        const match = getLegalActions(state).find((candidate) =>
+          candidate.type === pending.action.type
+          && candidate.x === pending.action.x
+          && candidate.y === pending.action.y);
+        action = match ?? null;
+        pending = null;
+      }
+      const seatConfig = row.seats[currentSeat] ?? {};
+      const llmFailed = llmFailedTurn !== null
+        && llmFailedTurn.seat === currentSeat && llmFailedTurn.turn === state.turn;
+      if (!action && !llmFailed && seatConfig.kind === "ai" && seatConfig.engine === "llm"
+        && stonesRemaining(state) === 2 && (state.placedThisTurn ?? 0) === 0) {
+        const pair = await tryLlmSeatTurn(row, state, currentSeat);
+        if (pair) {
+          action = pair[0];
+          if (pair.length === 2) {
+            pending = { seat: currentSeat, expectedSeq: state.seq + 1, action: pair[1] };
+          } else {
+            // Only one usable point came back. Place it, and let the local
+            // engine fill the second stone instantly — no second LLM call.
+            llmFailedTurn = { seat: currentSeat, turn: state.turn };
+          }
+        } else {
+          llmFailedTurn = { seat: currentSeat, turn: state.turn };
+        }
+      }
+      if (!action) {
+        action = await chooseAiSeatAction(row, state, currentSeat, {
+          timeBudgetMs,
+          skipLlm: llmFailed || (llmFailedTurn !== null
+            && llmFailedTurn.seat === currentSeat && llmFailedTurn.turn === state.turn)
+        });
+      }
       if (!action) {
         logger?.error?.("The AI has no action to choose for game " + gameId + ".");
         return;
@@ -351,6 +430,7 @@ export function createGameService({
         logger?.warn?.("The AI action was rejected (" + error.code + "); applying the first legal action.");
         applyAndPersist(row, fallback);
       }
+      report();
     }
     logger?.error?.("AI auto-play exceeded the safety limit for game " + gameId + ".");
   }
@@ -453,7 +533,7 @@ export function createGameService({
     return getRow(row.id);
   }
 
-  async function submitAction(gameId, user, rawAction) {
+  async function submitAction(gameId, user, rawAction, { onProgress = null } = {}) {
     const row = getGameForUser(gameId, user);
     if (row.status === "lobby") {
       throw new HttpError(409, "GAME_NOT_STARTED", "The host has not started this game yet.");
@@ -478,7 +558,14 @@ export function createGameService({
       }
     }
     applyAndPersist(row, rawAction);
-    await advanceAi(row.id);
+    // Show the human stone immediately, then each AI stone as it lands, instead
+    // of freezing the board for the whole LLM turn.
+    if (typeof onProgress === "function") {
+      try { onProgress(); } catch (error) {
+        logger?.warn?.("Move progress broadcast failed. (" + (error?.message ?? error) + ")");
+      }
+    }
+    await advanceAi(row.id, { onProgress });
     return getRow(row.id);
   }
 

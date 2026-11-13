@@ -392,6 +392,7 @@ function moveSystemPrompt(state, options) {
   const size = boardSize(state);
   const winLength = Number.isInteger(state.winLength) ? state.winLength : 6;
   const stonesOwed = Number.isInteger(options.stonesRemaining) ? options.stonesRemaining : 2;
+  const multi = options.multiStone === true;
   const lines = [
     "You are a strong Connect6 (六子棋) player controlling exactly one seat. Connect6 is a perfect-information placing game for two players; there is no randomness, no hidden information, no capture and no forbidden move.",
     "",
@@ -413,21 +414,55 @@ function moveSystemPrompt(state, options) {
       + (isNonEmptyString(player.color) ? ", color " + player.color : "")
       + "; you are on the move",
     "- stone" + (stonesOwed === 1 ? "" : "s") + " still owed this turn: " + stonesOwed
-      + " (you answer one stone per reply; you will be asked again if more are owed)",
+      + (multi
+        ? " — answer BOTH stones in this single reply"
+        : " (you answer one stone per reply; you will be asked again if more are owed)"),
     "- requested play strength: " + (options.difficulty || "normal"),
     "",
     "OUTPUT CONTRACT",
     "- Reply with exactly one JSON object and nothing else. No markdown fences, no commentary, no extra keys.",
-    "- Shape: {\"action\":{\"type\":\"place\",\"x\":9,\"y\":9},\"reason\":\"short reason\"}",
+    ...(multi ? [
+      "- Shape: {\"actions\":[{\"type\":\"place\",\"x\":9,\"y\":9},{\"type\":\"place\",\"x\":10,\"y\":9}],\"reason\":\"short reason\"}",
+      "- The actions array must hold exactly two DIFFERENT points; both are placed in this turn.",
+      "- If either point is illegal it is discarded, so choose two distinct empty points from the list below."
+    ] : [
+      "- Shape: {\"action\":{\"type\":\"place\",\"x\":9,\"y\":9},\"reason\":\"short reason\"}"
+    ]),
     "- x is the zero-based column index (A=0), y is the zero-based row index (row 1 = 0).",
-    "- There is exactly one legal action type: \"place\". Never emit pass, resign, recall, camp or a multi-stone action.",
-    "- The point must appear in the LEGAL ACTIONS list of the user message. Never invent a move or a coordinate.",
+    "- There is exactly one legal action type: \"place\". Never emit pass, resign, recall or camp.",
+    "- Every point you choose must appear in the CANDIDATE POINTS list of the user message.",
     "- reason: at most 200 characters, " + languageInstruction(options.language)
   ];
   if (isNonEmptyString(options.providerLabel)) {
     lines.push("- provider label: " + cleanToken(options.providerLabel, 40));
   }
   return lines.join("\n");
+}
+
+/**
+ * On a 19x19 board, listing all ~360 empty points costs thousands of input
+ * tokens and makes the model slow without making it any stronger: useful moves
+ * are always near existing stones. Show those neighbours instead; the server
+ * still validates against the full legal action space, so a shortlist cannot
+ * let an illegal move through.
+ */
+function candidateLegalActions(state, legalActions) {
+  const size = boardSize(state);
+  const cells = Array.isArray(state.cells) ? state.cells : [];
+  const occupied = [];
+  for (let y = 0; y < size; y += 1) {
+    for (let x = 0; x < size; x += 1) {
+      const seat = cells[y * size + x];
+      if (seat !== null && seat !== undefined) occupied.push([x, y]);
+    }
+  }
+  const centre = (size - 1) / 2;
+  const relevant = (x, y) => {
+    if (occupied.length === 0) return Math.abs(x - centre) <= 3 && Math.abs(y - centre) <= 3;
+    return occupied.some(([ox, oy]) => Math.abs(x - ox) <= 2 && Math.abs(y - oy) <= 2);
+  };
+  const shortlist = legalActions.filter((action) => action.type === "place" && relevant(action.x, action.y));
+  return shortlist.length >= 12 ? shortlist : legalActions;
 }
 
 function moveUserPrompt(state, options) {
@@ -452,9 +487,12 @@ function moveUserPrompt(state, options) {
   lines.push(renderBoard(state), "");
   // One line per row keeps a 19x19 point set to about twenty lines instead of
   // the three hundred a one-point-per-line list would cost in tokens.
-  lines.push("[LEGAL ACTIONS] every empty point is legal — " + legalActions.length + " in total. Choose exactly one:");
+  const shown = options.fullLegalList ? legalActions : candidateLegalActions(state, legalActions);
+  lines.push("[CANDIDATE POINTS] " + shown.length + " of " + legalActions.length
+    + " empty points shown; every empty point is legal, these are the relevant ones."
+    + (options.multiStone ? " Choose exactly two:" : " Choose exactly one:"));
   const byRow = new Map();
-  for (const action of legalActions) {
+  for (const action of shown) {
     const row = action.y + 1;
     if (!byRow.has(row)) byRow.set(row, []);
     byRow.get(row).push(formatCell(state, action.x, action.y));
@@ -462,7 +500,9 @@ function moveUserPrompt(state, options) {
   for (const row of Array.from(byRow.keys()).sort((a, b) => a - b)) {
     lines.push("  row " + row + ": " + byRow.get(row).join(" "));
   }
-  lines.push("", "Answer with the JSON object described in the system message. In that object x is the column index (A=0) and y is the row index minus one (row 1 = 0). A bare cell string such as \"K10\" is also accepted.");
+  lines.push("", options.multiStone
+    ? "Answer with the JSON object whose actions array holds two points, as described in the system message. In that object x is the column index (A=0) and y is the row index minus one (row 1 = 0)."
+    : "Answer with the JSON object described in the system message. In that object x is the column index (A=0) and y is the row index minus one (row 1 = 0). A bare cell string such as \"K10\" is also accepted.");
   return lines.join("\n");
 }
 
@@ -496,12 +536,22 @@ export function buildMoveMessages(options = {}) {
     stonesRemaining: owed,
     difficulty: typeof options.difficulty === "string" ? options.difficulty : "normal",
     providerLabel: typeof options.providerLabel === "string" ? options.providerLabel : "",
-    language: normalizeLanguage(options.language)
+    language: normalizeLanguage(options.language),
+    multiStone: options.multiStone === true,
+    fullLegalList: options.fullLegalList === true
   };
   return [
     { role: "system", content: moveSystemPrompt(state, resolved) },
     { role: "user", content: moveUserPrompt(state, resolved) }
   ];
+}
+
+/**
+ * Same position, but ask for both stones of a Connect6 turn in one reply, so a
+ * turn costs one provider round-trip instead of two.
+ */
+export function buildTurnMessages(options = {}) {
+  return buildMoveMessages({ ...options, stonesRemaining: 2, multiStone: true });
 }
 
 function pickActionCandidate(parsed) {
@@ -583,6 +633,42 @@ export function parseMoveResponse(text, second) {
     return { action: { ...action }, reason };
   } catch (error) {
     return null;
+  }
+}
+
+/**
+ * Parses a two-stone turn reply. Returns up to two distinct canonical legal
+ * actions; a malformed or single-stone reply simply yields fewer actions and
+ * the caller falls back for the missing stone.
+ */
+export function parseTurnResponse(text, options = {}) {
+  try {
+    const context = isObject(options) ? options : {};
+    const legalActions = Array.isArray(context.legalActions)
+      ? context.legalActions
+      : (context.state ? safeLegalActions(context.state) : []);
+    if (!Array.isArray(legalActions) || legalActions.length === 0) return [];
+    const parsed = extractJson(text);
+    if (parsed === null) return [];
+    let list = null;
+    if (Array.isArray(parsed)) list = parsed;
+    else if (isObject(parsed) && Array.isArray(parsed.actions)) list = parsed.actions;
+    else if (isObject(parsed)) list = [parsed];
+    if (!list) return [];
+    const out = [];
+    for (const raw of list) {
+      if (out.length >= 2) break;
+      const candidate = isObject(raw) && ("action" in raw || "move" in raw)
+        ? pickActionCandidate(raw)
+        : raw;
+      const action = validateMoveAction(candidate, legalActions, context.state ?? null);
+      if (!action) continue;
+      if (out.some((existing) => sameAction(existing, action))) continue;
+      out.push(action);
+    }
+    return out;
+  } catch (error) {
+    return [];
   }
 }
 
