@@ -259,8 +259,8 @@ export function createProvider(settings, {
   const providerName = String(settings?.provider ?? "custom");
   // DeepSeek turns thinking ON by default (effort high), and max_tokens covers
   // the chain of thought too. On a short move request all tokens go to
-  // reasoning_content and `content` comes back empty. Only move calls need the
-  // fast path; coach reports still benefit from thinking.
+  // reasoning_content and `content` comes back empty. Coach reports, chat and
+  // connectivity checks also need their token budget available for visible text.
   const thinkingSwitch = /api\.deepseek\.com/i.test(baseUrl);
 
   async function complete({ messages, kind = "generic", maxTokens = null, temperature = null, mockContext = null, timeoutMs: callTimeoutMs = null }) {
@@ -293,7 +293,8 @@ export function createProvider(settings, {
           temperature: temperature ?? (Number.isFinite(settings?.temperature) ? settings.temperature : 0.2),
           max_tokens: maxTokens ?? (Number.isInteger(settings?.maxOutputTokens) ? settings.maxOutputTokens : 1200),
           stream: false,
-          ...(thinkingSwitch && kind === "move" ? { thinking: { type: "disabled" } } : {})
+          ...(thinkingSwitch && ["move", "coach-report", "coach-chat", "test"].includes(kind)
+            ? { thinking: { type: "disabled" } } : {})
         }),
         signal: controller.signal,
         redirect: "error"

@@ -332,7 +332,12 @@ export async function mount(container, route) {
     uiState.analysisState = 'loading';
     render();
     try {
-      const response = await api.getAnalysis(id);
+      let response = await api.getAnalysis(id);
+      const summary = response?.analysis?.summary;
+      if (summary?.version === 'thick-earth-analysis/v2' && summary.explanationVersion !== 1
+        && game.viewer?.control !== 'spectator') {
+        response = await api.generateAnalysis(id);
+      }
       if (disposed) return;
       if (response && response.analysis) {
         uiState.analysis = response.analysis;
@@ -944,7 +949,11 @@ export async function mount(container, route) {
           metaParts.length ? h('span', { class: 'analysis-object-meta' }, metaParts.join(' · ')) : null
         ),
         detail ? h('p', { class: 'analysis-item-detail' }, detail) : null,
-        alternative ? h('p', { class: 'analysis-item-alt' }, t('game.analysisAlternative') + ': ' + alternative) : null
+        alternative ? h('p', { class: 'analysis-item-alt' }, t('game.analysisAlternative') + ': ' + alternative) : null,
+        Number.isInteger(item.turn) ? h('a', {
+          class: 'btn btn--ghost btn--sm',
+          href: '#/replay/' + encodeURIComponent(id) + '?turn=' + item.turn
+        }, icon('play', 13), t('analysis.replayTurn', { n: item.turn })) : null
       ));
     }
     return list.childNodes.length ? list : null;
@@ -960,7 +969,9 @@ export async function mount(container, route) {
     if (!summaryValue || typeof summaryValue !== 'object') return children;
     const headline = localizedAnalysisField(summaryValue, 'headline');
     const resultLine = localizedAnalysisField(summaryValue, 'resultLine');
+    const takeaway = localizedAnalysisField(summaryValue, 'takeaway');
     if (headline) children.push(h('p', { class: 'analysis-headline' }, headline));
+    if (takeaway) children.push(h('p', { class: 'analysis-text' }, takeaway));
     if (resultLine) children.push(h('p', { class: 'analysis-text' }, resultLine));
     if (Array.isArray(summaryValue.scores) && summaryValue.scores.length) {
       children.push(h('div', { class: 'analysis-score-list' },
@@ -1491,7 +1502,11 @@ export async function mount(container, route) {
       h('div', { class: 'card-head' },
         h('div', { class: 'card-head-text' },
           h('h2', { class: 'card-title' }, icon('message', 16), t('coach.title')),
-          h('p', { class: 'card-desc' }, t('coach.desc'))
+          h('p', { class: 'card-desc' }, t('coach.desc')),
+          coach.config && coach.config.configured ? h('p', { class: 'card-desc' },
+            t(coach.config.source === 'shared' ? 'coach.sharedModel' : 'coach.personalModel', {
+              model: coach.config.model || '—'
+            })) : null
         ),
         actions.length ? h('div', { class: 'card-actions' }, actions) : null
       ),

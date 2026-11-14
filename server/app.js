@@ -587,7 +587,7 @@ export function createApplication(options = {}) {
     if (!body || typeof body !== "object" || typeof body.enabled !== "boolean") {
       throw new HttpError(400, "INVALID_BODY", "enabled must be a boolean.");
     }
-    aiSettings.setSharedEnabled(body.enabled);
+    aiSettings.setSharedEnabled(body.enabled, admin.id);
     logger?.info?.("Shared LLM " + (body.enabled ? "enabled" : "disabled") + " by " + admin.id + ".");
     sendJson(ctx.res, 200, adminSharedView());
   }

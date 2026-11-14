@@ -115,6 +115,7 @@ export async function mount(container, route) {
       adminState.enabled = Boolean(data && data.enabled);
       adminState.available = Boolean(data && data.available);
       adminState.error = '';
+      if (aiState.settings) aiState.settings.sharedAvailable = adminState.available;
       toast(t('adminShared.saved'), { type: 'success' });
     } catch (error) {
       if (disposed) return;
@@ -139,7 +140,7 @@ export async function mount(container, route) {
           }),
           h('p', { class: 'card-desc', style: { marginTop: 0 } },
             adminState.enabled ? t('adminShared.on') : t('adminShared.off')),
-          !adminState.available
+          adminState.enabled && !adminState.available
             ? h('p', { class: 'card-desc', style: { marginTop: 0 } }, t('adminShared.sourceMissing'))
             : null,
           adminState.error
@@ -249,6 +250,7 @@ export async function mount(container, route) {
       applyAiSettings(data);
       aiState.saving = false;
       aiState.saveMessage = t('settingsAi.saved');
+      if (isAdmin) loadAdminShared();
       toast(t('settingsAi.saved'), { type: 'success' });
     } catch (error) {
       if (disposed) return;

@@ -406,6 +406,11 @@ export async function mount(container, route) {
       }
       loading = false;
       step = snapshots.length - 1;
+      const requestedTurn = Number(route?.query?.turn);
+      if (Number.isInteger(requestedTurn) && requestedTurn > 0) {
+        const target = snapshots.findIndex((snapshot) => snapshot.turn === requestedTurn);
+        if (target >= 0) step = target;
+      }
       render();
     } catch (err) {
       if (disposed) return;

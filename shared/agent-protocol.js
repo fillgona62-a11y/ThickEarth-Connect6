@@ -961,14 +961,17 @@ function coachSystemPrompt(language) {
     "WHAT MAKES A CONNECT6 MISTAKE",
     "- Ignoring a finishing move: a line of five with an open end wins immediately.",
     "- Failing to block: if the opponent has five in a row with an open end, that point had to be taken.",
-    "- Single threats: because a turn is two stones, one threat is answered for free. Only double threats win.",
-    "- Disconnected stones: a stone that joins nothing spends a tempo for nothing.",
+    "- Count the whole two-stone turn. Four stones in an unobstructed six-cell route can already threaten a two-stone finish, including routes with internal gaps.",
+    "- The opponent can also defend with two stones. Two threats alone do not prove a forced win; check whether both can be blocked. Do not call a first stone a missed block if the second stone of the same turn defends in time.",
+    "- A disconnected stone may defend or prepare another line; inspect its purpose before calling it wasted.",
     "",
     "GROUNDING RULES (strict, anti-hallucination)",
-    "- Use only the game facts, action log and LOCAL ANALYSIS provided by the user. They are computed by the server and are authoritative.",
+    "- Use the supplied game facts and action log as ground truth. LOCAL ANALYSIS is grounded but heuristic, not a proof that every suggested move is optimal or every unflagged move is correct.",
     "- Never invent turns, moves, points, line lengths or results. If the evidence does not support a claim, omit it.",
     "- keyMistakes must reference a real turn and the stone actually played on it; the better move must have been legal on that turn (otherwise omit it).",
     "- Cite concrete turns and cells when explaining a mistake or a strength.",
+    "- For each main finding explain what was played, which exact line or gaps mattered, the consequence, and an actionable response. Explain shape names in plain language; never use a pattern-score delta or stone-count margin as the explanation or a win probability.",
+    "- Prioritise one or two examples per section and two short training steps. Finish a complete JSON object; omit low-priority examples rather than truncating the report.",
     "- The report must be specific to this game; no generic motivational filler.",
     "",
     coachOutputSpec(language)
@@ -1007,6 +1010,9 @@ export function buildCoachMessages(options = {}) {
     "",
     "[LOCAL ANALYSIS GROUNDING]",
     buildAnalysisDigest(options.localAnalysis, language),
+    "",
+    "[OUTPUT BUDGET] Keep the entire JSON within " + (options.maxOutputTokens ?? 1200)
+      + " output tokens. Use concise details, empty arrays when evidence is absent, and close every JSON object and array.",
     "",
     coachOutputSpec(language)
   ];
@@ -1496,6 +1502,7 @@ export function buildCoachReportRepairMessages(options = {}) {
       state: context.state,
       localAnalysis: context.analysis ?? context.localAnalysis,
       metrics: context.metrics,
+      maxOutputTokens: context.maxOutputTokens,
       language: context.language
     });
   }
@@ -1534,6 +1541,7 @@ export function buildCoachReportMessages(options = {}) {
     state: options.state,
     localAnalysis: options.analysis ?? options.localAnalysis,
     metrics: options.metrics,
+    maxOutputTokens: options.maxOutputTokens,
     language: options.language
   });
 }

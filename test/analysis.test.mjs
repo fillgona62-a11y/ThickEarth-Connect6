@@ -229,3 +229,58 @@ test("a corrupted action log degrades to the prefix it can replay", () => {
   assert.equal(analysis.metrics.timeline.length, 4, "only the legal prefix is analysed");
   assert.equal(typeof analysis.summary.headline, "string");
 });
+
+test("review explains lines and gaps instead of exposing unexplained pattern deltas", () => {
+  const state = play(fiveForBlack(), [[10, 2], [11, 2], [5, 9]]);
+  const analysis = analyzeGame(state);
+  const developments = analysis.keyMoments.filter((entry) => entry.kind === "shape_development");
+  assert.ok(developments.length > 0);
+  for (const entry of developments) {
+    assert.match(entry.detailZh, /[A-S]\d+/);
+    assert.match(entry.detailZh, /缺口|连成|再补|延伸/);
+    assert.doesNotMatch(entry.detailZh, /棋型差值|变化 [+-]?\d+/);
+  }
+  assert.match(analysis.summary.takeawayZh, /F10/);
+  assert.match(analysis.recommendations.find((entry) => entry.code === "study_the_loss").detailZh, /F10/);
+});
+
+test("four stones and two gaps are identified before a two-stone winning turn", () => {
+  const state = play(freshGame(), [
+    [0, 9], [10, 0], [11, 0], [1, 9], [2, 9], [10, 1], [11, 1],
+    [3, 9], [0, 0], // black has A10..D10, not five
+    [10, 2], [11, 2], // white ignores the two-stone finish
+    [4, 9], [5, 9]
+  ]);
+  const analysis = analyzeGame(state);
+  const weakness = analysis.weaknesses.find((entry) => entry.code === "no_defence" && entry.seat === 1);
+  assert.ok(weakness);
+  assert.equal(weakness.turn, 6);
+  assert.match(weakness.detailZh, /E10 F10（2 子）/);
+  assert.doesNotMatch(weakness.detailZh, /上一个回合刚出现的五/);
+  const recommendation = analysis.recommendations.find((entry) => entry.code === "study_the_loss" && entry.seat === 1);
+  assert.equal(recommendation.alternative, "E10");
+  assert.match(analysis.summary.takeawayZh, /E10 F10/);
+});
+
+test("an internal gap in the final winning route is named as a defensive point", () => {
+  const state = play(freshGame(), [
+    [0, 9], [10, 0], [11, 0], [1, 9], [3, 9], [10, 1], [11, 1],
+    [4, 9], [0, 0], [10, 2], [11, 2], [2, 9], [5, 9]
+  ]);
+  const analysis = analyzeGame(state);
+  const weakness = analysis.weaknesses.find((entry) => entry.code === "no_defence");
+  assert.deepEqual(weakness.cells, ["C10", "F10"]);
+});
+
+test("blocking with the second stone of a turn is not reported as a missed defence", () => {
+  const state = play(fiveForBlack(), [[10, 2], [5, 9]]);
+  const analysis = analyzeGame(state);
+  assert.equal(analysis.weaknesses.some((entry) => entry.code === "unblocked_six"), false);
+  assert.equal(analysis.keyMoments.some((entry) => entry.kind === "unanswered_threat"), false);
+});
+
+test("winning with the second stone is not reported as a missed win on the first", () => {
+  const state = play(fiveForBlack(), [[10, 2], [11, 2], [0, 0], [5, 9]]);
+  const analysis = analyzeGame(state);
+  assert.equal(analysis.weaknesses.some((entry) => entry.code === "missed_win" && entry.seat === 0), false);
+});

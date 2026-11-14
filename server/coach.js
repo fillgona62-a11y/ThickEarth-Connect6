@@ -83,7 +83,7 @@ export function createCoachService({
   now = Date.now
 } = {}) {
   async function localAnalysisFor(game) {
-    if (game.analysis) return game.analysis;
+    if (game.analysis?.summary?.explanationVersion === 1) return game.analysis;
     try {
       return await analysis.generate(game.currentState, { metrics: game.metrics });
     } catch (error) {
@@ -111,8 +111,7 @@ export function createCoachService({
     };
   }
 
-  async function stateBeforeTurn(game, moves, turn) {
-    const index = moves.findIndex((move) => move.turn === turn);
+  async function stateBeforeMove(game, moves, index) {
     if (index === -1) return null;
     try {
       return replayActions(game.initialState, moves.slice(0, index).map((move) => move.action));
@@ -172,9 +171,15 @@ export function createCoachService({
       const better = cleanText(entry.better, MAX.mistakeText);
       const reason = cleanText(entry.reason, MAX.mistakeReason);
       if (actual.length === 0 || reason.length === 0) continue;
+      // A turn can contain two stones: validate against the actual stone and
+      // its own board snapshot, rather than always using the turn's first one.
+      const index = moves.findIndex((move) => move.turn === entry.turn && move.seat === entry.seat
+        && move.action?.type === "place"
+        && formatCell(game.currentState, move.action.x, move.action.y) === actual.toUpperCase());
+      if (index === -1) continue;
       const mistake = { seat: entry.seat, turn: entry.turn, actual, reason };
       if (better.length > 0) {
-        const stateBefore = await stateBeforeTurn(game, moves, entry.turn);
+        const stateBefore = await stateBeforeMove(game, moves, index);
         if (stateBefore) {
           const legal = getLegalActions(stateBefore);
           const parsedBetter = await protocol.parseMoveResponse(better, { state: stateBefore, legalActions: legal });
@@ -222,8 +227,8 @@ export function createCoachService({
     if (existing?.status === "ready" && !force) {
       return { cached: true, report: existing.report };
     }
-    const settings = aiSettings.resolveForUse(user.id);
-    aiSettings.assertQuota(user.id);
+    const settings = aiSettings.resolveForCoach(user.id);
+    aiSettings.assertQuota(settings.userId);
     const moves = repositories.listActions(game.id);
     const localAnalysis = await localAnalysisFor(game);
     const baseContext = {
@@ -231,6 +236,7 @@ export function createCoachService({
       state: game.currentState,
       moves,
       analysis: localAnalysis,
+      maxOutputTokens: settings.maxOutputTokens,
       language
     };
     const provider = providerFactory(settings, { gameId: game.id, requestingUserId: user.id });
@@ -238,7 +244,7 @@ export function createCoachService({
     let outputTokens = 0;
     let previousText = "";
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      aiSettings.assertQuota(user.id);
+      aiSettings.assertQuota(settings.userId);
       const messages = attempt === 1
         ? await protocol.buildCoachReportMessages(baseContext)
         : await protocol.buildCoachReportRepairMessages({ ...baseContext, previousText });
@@ -304,8 +310,8 @@ export function createCoachService({
     if (!stored || stored.status !== "ready") {
       throw new HttpError(409, "COACH_REPORT_REQUIRED", "Generate a coach report before asking follow-up questions.");
     }
-    const settings = aiSettings.resolveForUse(user.id);
-    aiSettings.assertQuota(user.id);
+    const settings = aiSettings.resolveForCoach(user.id);
+    aiSettings.assertQuota(settings.userId);
     const localAnalysis = await localAnalysisFor(game);
     const history = repositories.listCoachMessages(game.id, 8, user.id);
     const baseContext = {
@@ -323,7 +329,7 @@ export function createCoachService({
     let previousText = "";
     let reply = null;
     for (let attempt = 1; attempt <= 2; attempt += 1) {
-      aiSettings.assertQuota(user.id);
+      aiSettings.assertQuota(settings.userId);
       const messages = attempt === 1
         ? await protocol.buildCoachChatMessages(baseContext)
         : await protocol.buildCoachChatRepairMessages({ ...baseContext, previousText });

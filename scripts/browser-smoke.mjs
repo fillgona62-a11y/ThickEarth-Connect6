@@ -63,7 +63,7 @@ try {
   server = await startServer({
     mode: "web", host: "127.0.0.1", port: PORT, dbPath,
     publicOrigin: BASE, secureCookies: false,
-    env: { ...process.env, AI_SHARED_LLM: "0" },
+    env: { ...process.env, AI_SHARED_LLM: "1", AI_SHARED_USER_EMAIL: "smoke@example.com" },
     logger: { info() {}, warn() {}, error() {} }
   });
 
@@ -118,16 +118,76 @@ try {
   await sleep(1800);
   const settingsText = await evaluate("(document.querySelector('#main-content')||document.body).innerText");
   const settingsLength = await evaluate("document.body.innerHTML.length");
+  const navOrder = await evaluate("Array.from(document.querySelectorAll('.main-nav a')).map(a => a.getAttribute('href')).slice(-2).join(',')");
+
+  // Exercise the actual report UI as a registered user borrowing a model.
+  // mock://local stays inside the app; no external provider is contacted.
+  const finished = await evaluate(`(async () => {
+    const call = async (path, body, method = 'POST') => {
+      const r = await fetch(path, {method, headers:{'Content-Type':'application/json'}, body:JSON.stringify(body)});
+      const data = await r.json();
+      if (!r.ok) throw new Error(data.error?.code || String(r.status));
+      return data;
+    };
+    await call('/api/ai/settings', {enabled:true, provider:'custom', baseUrl:'mock://local', model:'coach-smoke', apiKey:'smoke-test-key'}, 'PUT');
+    await call('/api/auth/register', {email:'smoke-guest@example.com', password:'SmokeCheck2026!', displayName:'Guest'});
+    const {game} = await call('/api/games', {mode:'local', playerCount:2, seats:[{kind:'human'}, {kind:'human'}]});
+    for (const [x,y] of [[0,9],[10,0],[11,0],[1,9],[2,9],[10,1],[11,1],[3,9],[0,0],[10,2],[11,2],[4,9],[5,9]]) {
+      await call('/api/games/' + game.id + '/actions', {action:{type:'place',x,y}});
+    }
+    return game.id;
+  })()`);
+  if (typeof finished !== "string") throw new Error("Could not create browser review fixture");
+  await send("Page.navigate", { url: BASE + "/#/game/" + encodeURIComponent(finished) });
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    const generated = await evaluate(`(() => {
+      const button = document.querySelector('.postgame-analysis .analysis-empty button');
+      if (!button) return false;
+      button.click();
+      return true;
+    })()`);
+    if (generated) break;
+    await sleep(100);
+  }
+  let reviewText = "";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    reviewText = await evaluate("document.querySelector('.postgame-analysis')?.innerText || ''");
+    if (String(reviewText).includes("E10 F10")) break;
+    await sleep(100);
+  }
+  const sharedCoach = await evaluate("document.querySelector('.coach-card')?.innerText.includes('coach-smoke') && document.querySelector('.coach-card')?.innerText.includes('共享模型')");
+  await evaluate("document.querySelector('.coach-empty-state button')?.click()");
+  let reportReady = false;
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    reportReady = await evaluate("Boolean(document.querySelector('.coach-report .coach-headline'))");
+    if (reportReady) break;
+    await sleep(100);
+  }
+  await evaluate("document.querySelector('.postgame-analysis a[href$=\"?turn=6\"]')?.click()");
+  let replayStep = "";
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    replayStep = await evaluate("document.querySelector('.replay-layout .move-log-item.is-current .move-log-seq')?.textContent || ''");
+    if (String(replayStep).trim() === "9") break;
+    await sleep(100);
+  }
 
   console.log("home html length:", homeLength);
   console.log("register status:", registered);
   console.log("settings html length:", settingsLength);
   console.log("settings has cards:", /AI Agent|语言|站点管理/.test(String(settingsText)));
+  console.log("settings follows rules:", navOrder === "#/rules,#/settings");
+  console.log("review names the two-stone finish:", String(reviewText).includes("E10 F10"));
+  console.log("coach uses the shared model:", sharedCoach);
+  console.log("coach report rendered:", reportReady);
+  console.log("replay opens before turn 6:", String(replayStep).trim() === "9");
   console.log("uncaught exceptions:", exceptions.length);
   for (const error of exceptions.slice(0, 3)) console.log("  !", error.slice(0, 160));
 
   const pass = homeLength > 1000 && registered === 201
     && settingsLength > 2000 && /AI Agent|语言/.test(String(settingsText))
+    && navOrder === "#/rules,#/settings"
+    && String(reviewText).includes("E10 F10") && !String(reviewText).includes("棋型差值变化")
+    && sharedCoach && reportReady && String(replayStep).trim() === "9"
     && exceptions.length === 0;
   console.log(pass ? "RESULT: PASS" : "RESULT: FAIL");
   if (!pass) process.exitCode = 1;

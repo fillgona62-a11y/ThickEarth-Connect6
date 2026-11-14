@@ -111,12 +111,20 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     return stored === "1" || stored === "true";
   }
 
-  function setSharedEnabled(enabled) {
+  function setSharedEnabled(enabled, sourceUserId = null) {
+    if (enabled && sourceUserId) {
+      // Only the administrator endpoint supplies this ID. Sharing always uses
+      // the model that administrator deliberately configured, never a visitor's.
+      resolveForUse(sourceUserId);
+      repositories.setSiteSetting?.("shared_llm_user_id", sourceUserId, now());
+    }
     repositories.setSiteSetting?.(SHARED_SWITCH_KEY, enabled ? "1" : "0", now());
   }
 
   function sharedUserId() {
     if (!isSharedEnabled()) return null;
+    const selected = repositories.getSiteSetting?.("shared_llm_user_id");
+    if (selected) return selected;
     const explicit = String(env.AI_SHARED_USER_ID ?? "").trim();
     if (explicit) return explicit;
     const email = String(env.AI_SHARED_USER_EMAIL ?? "").trim().toLowerCase();
@@ -270,6 +278,20 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     }
   }
 
+  // Use the same personal-first, shared-second route as an LLM opponent.
+  // The returned userId remains the credential owner so withUsage bills the
+  // correct account and applies the requesting user's shared allowance.
+  function resolveForCoach(userId) {
+    try {
+      return resolveForUse(userId);
+    } catch (error) {
+      if (!(error instanceof HttpError) || !["AI_NOT_CONFIGURED", "AI_DISABLED"].includes(error.code)) throw error;
+      const shared = getSharedForMove();
+      if (shared) return shared.settings;
+      throw error;
+    }
+  }
+
   function assertQuota(userId) {
     const stored = getStored(userId);
     const usage = monthUsage(userId);
@@ -310,10 +332,18 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
 
   function coachConfig(userId) {
     const stored = getStored(userId);
+    let resolved = null;
+    try {
+      resolved = resolveForCoach(userId);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+    }
     return {
-      configured: isConfigured(stored),
-      enabled: stored.enabled,
-      hasKey: Boolean(stored.apiKeyEncrypted)
+      configured: Boolean(resolved),
+      enabled: Boolean(resolved),
+      hasKey: Boolean(decryptStoredKey(stored)),
+      source: resolved ? (resolved.userId === userId ? "personal" : "shared") : null,
+      model: resolved?.model ?? null
     };
   }
 
@@ -368,6 +398,7 @@ export function createAiSettingsService({ repositories, secretStore, mode = "des
     updateSettings,
     clearKey,
     resolveForUse,
+    resolveForCoach,
     resolveTestCandidate,
     getForMove,
     isSharedEnabled,

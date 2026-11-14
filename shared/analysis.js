@@ -37,7 +37,8 @@ import {
   applyAction,
   computeResult,
   createGame,
-  formatCell
+  formatCell,
+  inBounds
 } from "./rules.js";
 import { WIN_SCORE, centreBias, pointScore, runAlong, runScore, winningPoints } from "./patterns.js";
 import { chooseAiAction } from "./ai.js";
@@ -299,6 +300,118 @@ function containsPoint(points, x, y) {
   return safeArray(points).some((point) => point.x === x && point.y === y);
 }
 
+/** Concrete line evidence for a placed or hypothetical stone. */
+function axisEvidence(state, point, seat, dx, dy) {
+  const line = [{ x: point.x, y: point.y }];
+  const open = [];
+  for (const sign of [-1, 1]) {
+    let x = point.x + dx * sign;
+    let y = point.y + dy * sign;
+    while (inBounds(state, x, y) && state.cells[y * state.boardSize + x] === seat) {
+      if (sign < 0) line.unshift({ x, y });
+      else line.push({ x, y });
+      x += dx * sign;
+      y += dy * sign;
+    }
+    if (inBounds(state, x, y) && state.cells[y * state.boardSize + x] === null) open.push({ x, y });
+  }
+  return { line, open, axis: axisNameOf(line) };
+}
+
+/** Six-cell routes through a point that need only one or two more stones. */
+function completionPlans(state, seat, point) {
+  const plans = [];
+  const seen = new Set();
+  for (const [dx, dy] of DIRECTIONS) {
+    for (let offset = 0; offset < WIN_LENGTH; offset += 1) {
+      const line = [];
+      const stones = [];
+      const gaps = [];
+      for (let step = 0; step < WIN_LENGTH; step += 1) {
+        const x = point.x + (step - offset) * dx;
+        const y = point.y + (step - offset) * dy;
+        if (!inBounds(state, x, y)) break;
+        const owner = state.cells[y * state.boardSize + x];
+        if (owner !== null && owner !== seat) break;
+        const cell = { x, y };
+        line.push(cell);
+        if (owner === seat) stones.push(cell);
+        else gaps.push(cell);
+      }
+      if (line.length !== WIN_LENGTH || gaps.length < 1 || gaps.length > STONES_PER_TURN) continue;
+      const key = gaps.map((cell) => cell.y * state.boardSize + cell.x).sort((a, b) => a - b).join(",");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      plans.push({ line, stones, gaps, axis: axisNameOf(line) });
+    }
+  }
+  return plans.sort((a, b) => a.gaps.length - b.gaps.length);
+}
+
+function planText(state, plan) {
+  const range = notationOf(state, plan.line[0]) + "–" + notationOf(state, plan.line[plan.line.length - 1]);
+  const stones = formatCellList(state, plan.stones, WIN_LENGTH);
+  const gaps = formatCellList(state, plan.gaps, STONES_PER_TURN);
+  return {
+    en: "the " + plan.axis.en + " " + range + " contains stones at " + stones
+      + "; filling " + gaps + " (" + plan.gaps.length + " more stones) completes six",
+    zh: plan.axis.zh + " " + range + " 已有 " + stones + "，再补 " + gaps
+      + "（" + plan.gaps.length + " 子）就能连六"
+  };
+}
+
+function decisionExplanation(context, decision) {
+  const { state } = context;
+  const plan = decision.createdPlans[0];
+  const blocked = decision.blockedPlans[0];
+  if (blocked && (!plan || decision.bestAxis.length < 4)) {
+    const text = planText(state, blocked);
+    return {
+      en: "Turn " + decision.turn + ": the opponent's " + text.en + ". Playing " + decision.notation
+        + " occupied one of those gaps and broke this route. Other routes still need checking.",
+      zh: "第 " + decision.turn + " 回合，对手的" + text.zh + "。你落在 " + decision.notation
+        + "，占住了其中一个缺口，切断这条连六路线；接下来仍需检查对手的其他线路。"
+    };
+  }
+  if (plan) {
+    const text = planText(state, plan);
+    return {
+      en: "Turn " + decision.turn + ", after " + decision.notation + ": " + text.en
+        + ". This is a threat, not a forced win: the opponent can occupy a gap before your next turn.",
+      zh: "第 " + decision.turn + " 回合落在 " + decision.notation + " 后，" + text.zh
+        + "。这一步形成了具体威胁；如果轮到对手，对手可以先占缺口，因此还不能据此认定必胜。"
+    };
+  }
+  const line = formatCellList(state, decision.lineEvidence.line, state.boardSize);
+  const open = formatCellList(state, decision.lineEvidence.open);
+  return {
+    en: "Turn " + decision.turn + ": " + decision.notation + " joined " + line + " on "
+      + decision.lineEvidence.axis.en + " (" + decision.bestAxis.length + " stones). "
+      + (open ? "Open ends: " + open + ". Check those extensions while watching the opponent's threats."
+        : "Both ends are blocked; this run cannot be extended along that axis."),
+    zh: "第 " + decision.turn + " 回合，" + decision.notation + " 把 " + line + " 在"
+      + decision.lineEvidence.axis.zh + "上连成 " + decision.bestAxis.length + " 子。"
+      + (open ? "可延伸的端点是 " + open + "；下一步可围绕这些点发展，同时先检查对手是否有连六威胁。"
+        : "两端均被棋子或边界封住，这条线暂时无法继续延伸。")
+  };
+}
+
+/** Reconstruct the winning route at the loser's final chance to defend. */
+function losingRoute(context, seat) {
+  const { result, decisions, replay, state } = context;
+  if (result.endReason !== "six_in_a_row" || safeArray(result.winnerSeats).includes(seat) || replay.truncated) return null;
+  const finalDecision = decisions.filter((entry) => entry.seat === seat).at(-1);
+  if (!finalDecision) return null;
+  const last = decisions.find((entry) => entry.seat === seat && entry.turn === finalDecision.turn);
+  const before = replay.before[last.decision - 1];
+  const winner = safeArray(result.winnerSeats)[0];
+  const finalMove = replay.records.at(-1);
+  const plans = completionPlans(before, winner, finalMove)
+    .filter((plan) => plan.line.every((cell) => state.cells[cell.y * state.boardSize + cell.x] === winner));
+  if (!plans.length) return null;
+  return { decision: last, plan: plans[0] };
+}
+
 /**
  * Walks every decision once and produces the flat record the rest of the module
  * (and the timeline in metrics) is built from.
@@ -338,6 +451,13 @@ function analyseDecisions(context) {
     const fiveAxes = axes.filter((axis) => axis.score >= SCORE_FIVE).length;
 
     const after = index + 1 < replay.before.length ? replay.before[index + 1] : replay.final;
+    let turnEnd = index;
+    while (turnEnd < lastIndex && replay.records[turnEnd + 1].seat === seat
+      && replay.records[turnEnd + 1].turn === record.turn) turnEnd += 1;
+    const afterTurn = replay.before[turnEnd + 1] ?? replay.final;
+    const turnFinished = afterTurn && (afterTurn.turn !== record.turn || afterTurn.phase === PHASES.FINISHED);
+    const wonThisTurn = turnEnd === lastIndex && reason === "six_in_a_row" && winners.includes(seat);
+    const unblockedAtTurnEnd = turnFinished && !wonThisTurn ? winningPoints(afterTurn, opponent).length : 0;
     let swing = 0;
     if (after) {
       try {
@@ -371,9 +491,11 @@ function analyseDecisions(context) {
     if (endedGame) {
       quality = "winning";
     } else if (winsAvailable.length > 0) {
-      quality = tookAvailableWin ? "winning" : "missed_win";
+      quality = tookAvailableWin ? "winning" : wonThisTurn ? "good"
+        : turnFinished && index === turnEnd ? "missed_win" : "unrated";
     } else if (threatsFaced.length > 0) {
-      quality = answeredThreat ? "critical_block" : "blunder";
+      quality = answeredThreat ? "critical_block"
+        : unblockedAtTurnEnd > 0 && index === turnEnd ? "blunder" : "unrated";
     } else if (reference && referenceValue > 0) {
       ratio = value / referenceValue;
       quality = ratio >= 0.98 ? "best" : ratio >= 0.8 ? "good" : ratio >= 0.45 ? "ok" : "loose";
@@ -395,6 +517,10 @@ function analyseDecisions(context) {
       ratio: ratio === null ? null : round(ratio, 3),
       bestAxisScore: bestAxis.score,
       bestAxis: { length: bestAxis.length, openEnds: bestAxis.openEnds },
+      lineEvidence: axisEvidence(before, record, seat, bestAxis.dx ?? 1, bestAxis.dy ?? 0),
+      createdPlans: after ? completionPlans(after, seat, record) : [],
+      blockedPlans: completionPlans(before, opponent, record)
+        .filter((plan) => containsPoint(plan.gaps, record.x, record.y)),
       strongAxes,
       fiveAxes,
       winsAvailable: winsAvailable.length,
@@ -451,9 +577,9 @@ function buildKeyMoments(context) {
       title: "Six in a row",
       titleZh: "连成六子",
       detail: "Turn " + lastRecord.turn + ": " + lastRecord.notation + " closed a line of "
-        + lineLength + " on " + axis.en + ".",
+        + lineLength + " on " + axis.en + ": " + formatCellList(state, result.line, state.boardSize) + ".",
       detailZh: "第 " + lastRecord.turn + " 回合，" + lastRecord.notation + " 在" + axis.zh
-        + "上连成 " + lineLength + " 子。"
+        + "上将 " + formatCellList(state, result.line, state.boardSize) + " 连成 " + lineLength + " 子，直接结束对局。"
     }));
   }
 
@@ -494,7 +620,8 @@ function buildKeyMoments(context) {
       }));
     }
 
-    if (decision.strongAxes >= 2) {
+    if (decision.strongAxes >= 2 && !decision.endedGame) {
+      const explanation = decisionExplanation(context, decision);
       moments.push(moment({
         seat: decision.seat,
         turn: decision.turn,
@@ -504,10 +631,10 @@ function buildKeyMoments(context) {
         weight: 620,
         title: "Double threat",
         titleZh: "形成双威胁",
-        detail: "Turn " + decision.turn + ": " + decision.notation + " created threats on "
-          + decision.strongAxes + " axes at once.",
-        detailZh: "第 " + decision.turn + " 回合，" + decision.notation
-          + " 同时在 " + decision.strongAxes + " 条线上形成威胁。"
+        detail: explanation.en + " There are strong shapes on " + decision.strongAxes
+          + " axes, but two defensive stones may still answer them.",
+        detailZh: explanation.zh + " 此处同时涉及 " + decision.strongAxes
+          + " 个方向；对手一回合有两子，不能只凭双威胁就断定挡不住。"
       }));
     }
 
@@ -542,8 +669,8 @@ function buildKeyMoments(context) {
       kind: "critical_block",
       severity: "medium",
       weight: 520,
-      title: "Held off " + decision.threatsFaced + " winning points",
-      titleZh: "同时挡住 " + decision.threatsFaced + " 个连六点",
+      title: "Prioritised an opponent's winning point",
+      titleZh: "优先封堵对手的制胜点",
       detail: "Turn " + decision.turn + ": the opponent had " + decision.threatsFaced
         + " winning points at once and " + decision.notation + " closed one of them.",
       detailZh: "第 " + decision.turn + " 回合，对手同时有 " + decision.threatsFaced
@@ -551,28 +678,34 @@ function buildKeyMoments(context) {
     }));
   }
 
-  // Momentum swings: only finished, non-winning decisions can show a clean delta.
-  const swings = decisions
-    .filter((decision) => !decision.endedGame)
+  // Keep the numeric balance in metrics. Human review explains the actual line,
+  // empty cells and consequence instead of presenting an unexplained score.
+  const developments = decisions
+    .filter((decision) => !decision.endedGame && decision.strongAxes < 2
+      && !["missed_win", "blunder"].includes(decision.quality)
+      && (decision.createdPlans.length || decision.blockedPlans.length || decision.bestAxis.length >= 3))
     .slice()
-    .sort((a, b) => Math.abs(b.swing) - Math.abs(a.swing))
-    .slice(0, 3);
-  for (const decision of swings) {
-    if (Math.abs(decision.swing) < 20_000) continue;
-    const up = decision.swing > 0;
+    .sort((a, b) => Number(Boolean(b.createdPlans.length || b.blockedPlans.length))
+      - Number(Boolean(a.createdPlans.length || a.blockedPlans.length)) || Math.abs(b.swing) - Math.abs(a.swing));
+  const selectedTurns = new Set();
+  for (const decision of developments) {
+    const key = decision.seat + ":" + decision.turn;
+    if (selectedTurns.has(key)) continue;
+    selectedTurns.add(key);
+    if (selectedTurns.size > 4) break;
+    const explanation = decisionExplanation(context, decision);
+    const blocked = decision.blockedPlans.length > 0 && (!decision.createdPlans.length || decision.bestAxis.length < 4);
     moments.push(moment({
       seat: decision.seat,
       turn: decision.turn,
       notation: decision.notation,
-      kind: up ? "swing_up" : "swing_down",
-      severity: up ? "low" : "medium",
-      weight: 300,
-      title: up ? "Position swung your way" : "Position swung away",
-      titleZh: up ? "局面大幅向你倾斜" : "局面大幅转向对手",
-      detail: "Turn " + decision.turn + ": " + decision.notation + " moved the pattern balance by "
-        + (up ? "+" : "") + String(decision.swing) + ".",
-      detailZh: "第 " + decision.turn + " 回合，" + decision.notation + " 让棋型差值变化 "
-        + (up ? "+" : "") + String(decision.swing) + "。"
+      kind: blocked ? "route_block" : "shape_development",
+      severity: "low",
+      weight: decision.createdPlans.length || blocked ? 420 : 300,
+      title: blocked ? "Cut off a route to six" : decision.createdPlans.length ? "Created a route to six" : "Connected stones with room to extend",
+      titleZh: blocked ? "切断对手的连六路线" : decision.createdPlans.length ? "留下可连六的缺口" : "连接棋子并寻找延伸点",
+      detail: explanation.en,
+      detailZh: explanation.zh
     }));
   }
 
@@ -591,7 +724,8 @@ function buildKeyMoments(context) {
 
 function seatFacts(state, seat, decisions) {
   const mine = decisions.filter((decision) => decision.seat === seat);
-  const loose = mine.filter((decision) => decision.bestAxisScore < SCORE_TWO);
+  const loose = mine.filter((decision) => decision.bestAxisScore < SCORE_TWO
+    && decision.blockedPlans.length === 0 && decision.threatsFaced === 0 && decision.decision > 1);
   const fiveOrMore = mine.filter((decision) => decision.bestAxisScore >= SCORE_FIVE);
   const centre = (state.boardSize - 1) / 2;
   const band = Math.floor(state.boardSize / 3);
@@ -602,6 +736,7 @@ function seatFacts(state, seat, decisions) {
   });
   let max = null;
   for (const decision of mine) {
+    if (decision.endedGame) continue;
     if (!max || decision.bestAxisScore > max.bestAxisScore) max = decision;
   }
   const shapes = { six: 0, five: 0, open_four: 0, open_three: 0, open_two: 0, closed_two: 0, loose: 0 };
@@ -619,6 +754,7 @@ function seatFacts(state, seat, decisions) {
     edge: edge.length,
     edgeRatio: round(edge.length / total, 3),
     fiveOrMore: fiveOrMore.length,
+    threatMoves: mine.filter((decision) => decision.createdPlans.length > 0 || decision.endedGame).length,
     missedWins: mine.filter((decision) => decision.quality === "missed_win").length,
     unblocked: mine.filter((decision) => decision.quality === "blunder").length,
     blocks: mine.filter((decision) => decision.quality === "critical_block").length,
@@ -668,32 +804,24 @@ function buildWeaknesses(context) {
             + first.turn + " 回合（" + first.notation + "），而 " + notationOf(state, first.threatPoint)
             + " 当时已经是制胜点。"
       });
-    } else if (lost) {
-      // No blunder means the opponent's six was never left unanswered — it was
-      // built and closed inside a single turn, which is a different lesson.
-      const last = mine[mine.length - 1] || null;
-      const insideOneTurn = Boolean(last) && last.threatsFaced === 0;
-      const winnerSeat = safeArray(result.winnerSeats)[0];
+    } else if (lost && losingRoute(context, seat)) {
+      const route = losingRoute(context, seat);
+      const last = route.decision;
+      const text = planText(state, route.plan);
       list.push({
         seat,
         severity: "high",
         code: "no_defence",
         turn: last ? last.turn : null,
         notation: last ? last.notation : "",
-        title: insideOneTurn ? "The six formed inside one turn" : "No answer to the winning line",
-        titleZh: insideOneTurn ? "连六在一个回合内成形" : "对制胜线路没有应对",
-        detail: insideOneTurn
-          ? "Your last move (turn " + last.turn + ", " + last.notation + ") still faced no winning point, "
-            + "so " + displayName(state, winnerSeat) + " built and closed the six inside a single turn. "
-            + "The five had to be broken one turn earlier."
-          : "The game ended with " + endReasonText(reason, "en") + " on turn " + result.turns
-            + " and the last five was never contested.",
-        detailZh: insideOneTurn
-          ? "你最后一手（第 " + last.turn + " 回合 " + last.notation + "）时对手还没有连六点，"
-            + displayNameZh(state, winnerSeat) + " 是在自己最后一个回合里把六子搭好并连成的。"
-            + "要破的是上一个回合刚出现的五。"
-          : "对局在第 " + result.turns + " 回合以" + endReasonText(reason, "zh")
-            + "结束，最后的五连没有被干扰。"
+        cells: route.plan.gaps.map((point) => notationOf(state, point)),
+        title: "Missed a two-stone route to six",
+        titleZh: "漏看了对手两子内连六的路线",
+        detail: "Before " + last.notation + " on turn " + last.turn + ", the opponent's " + text.en
+          + ". Your move left both the route and its gaps available, and the opponent completed it on turn " + result.turns + ".",
+        detailZh: "第 " + last.turn + " 回合落 " + last.notation + " 前，对手的" + text.zh
+          + "。实际落子没有占住这些缺口，对手在第 " + result.turns
+          + " 回合完成了这条线。应提前破坏这条四子或五子的路线，而不是等到对手已经连成六子。"
       });
     }
 
@@ -716,9 +844,8 @@ function buildWeaknesses(context) {
       });
     }
 
-    if (facts.fiveOrMore === 0 && facts.decisions >= 6) {
+    if (facts.threatMoves === 0 && facts.decisions >= 6) {
       const peak = facts.peak;
-      const shape = shapeOf(peak ? peak.bestAxisScore : 0);
       list.push({
         seat,
         severity: "medium",
@@ -727,16 +854,17 @@ function buildWeaknesses(context) {
         notation: peak ? peak.notation : "",
         title: "Never threatened six",
         titleZh: "始终没有形成连六威胁",
-        detail: "Not one stone created a five or better. The strongest shape was "
-          + shape.en + (peak ? " at " + peak.notation + " (turn " + peak.turn + ")" : "") + ".",
-        detailZh: "没有任何一手形成冲五以上的形状。最强的形状是" + shape.zh
-          + (peak ? "（第 " + peak.turn + " 回合 " + peak.notation + "）" : "") + "。"
+        detail: "No analysed stone left a six-cell route that could be completed with at most two more stones. "
+          + (peak ? decisionExplanation(context, peak).en : ""),
+        detailZh: "在已复盘的落子中，没有形成一条再补一至两子就能连六的线路。"
+          + (peak ? decisionExplanation(context, peak).zh : "")
       });
     }
 
     if (facts.looseRatio >= 0.4 && facts.decisions >= 8) {
       const worst = mine
-        .filter((decision) => decision.bestAxisScore < SCORE_TWO)
+        .filter((decision) => decision.bestAxisScore < SCORE_TWO && !decision.blockedPlans.length
+          && !decision.threatsFaced && decision.decision > 1)
         .sort((a, b) => a.bestAxisScore - b.bestAxisScore)[0];
       list.push({
         seat,
@@ -750,7 +878,7 @@ function buildWeaknesses(context) {
           + facts.loose + " of " + facts.decisions + ") created no run of two or more"
           + (worst ? ", worst at " + worst.notation + " on turn " + worst.turn : "") + ".",
         detailZh: "有 " + Math.round(facts.looseRatio * 100) + "% 的落子（"
-          + facts.loose + "/" + facts.decisions + "）没有形成两子以上的连接"
+          + facts.loose + "/" + facts.decisions + "）既没有形成两子以上的连接，也没有切断已识别的对手连六路线"
           + (worst ? "，最差的是第 " + worst.turn + " 回合的 " + worst.notation : "") + "。"
       });
     }
@@ -820,36 +948,36 @@ function buildRecommendations(context) {
         notation: first.notation,
         title: "Read the opponent's five before you build",
         titleZh: "先数对手的五连，再考虑进攻",
-        detail: "A five with an open end is a gun on the table. On turn " + first.turn
-          + " the opponent had one at " + notationOf(state, first.threatPoint) + ".",
-        detailZh: "有活端的五连就是顶在头上的枪。第 " + first.turn + " 回合，对手在 "
-          + notationOf(state, first.threatPoint) + " 就有这样的点。",
+        detail: "On turn " + first.turn + ", use " + notationOf(state, first.threatPoint)
+          + " instead of " + first.notation + " to stop this immediate six. Check the remaining threats before placing your other stone.",
+        detailZh: "第 " + first.turn + " 回合，可把 " + first.notation + " 改为 "
+          + notationOf(state, first.threatPoint) + "，先封住这个一子即可连六的点；另一子再处理其他威胁或发展自己的线路。",
         alternative: notationOf(state, first.threatPoint)
       });
     }
 
-    if (facts.fiveOrMore === 0 && facts.decisions >= 6) {
+    if (facts.threatMoves === 0 && facts.decisions >= 6) {
       const peak = facts.peak;
-      const shape = shapeOf(peak ? peak.bestAxisScore : 0);
       list.push({
         seat,
         priority: 3,
         code: "build_threats",
         turn: peak ? peak.turn : null,
         notation: peak ? peak.notation : "",
-        title: "Build two threats, not one",
-        titleZh: "要造两个威胁，而不是一个",
-        detail: "Single threats are answered for free in Connect6 because a turn is two stones. "
-          + "Your best shape all game was " + shape.en + "; aim for two open fours at once.",
-        detailZh: "六子棋一回合两子，单点威胁很容易被挡住。你全盘最好的形状只是"
-          + shape.zh + "；目标应该是同时形成两个活四。",
+        title: "Plan both stones around a route to six",
+        titleZh: "把每回合两子放在同一进攻计划里",
+        detail: (peak ? decisionExplanation(context, peak).en + " " : "")
+          + "Find a six-cell route without an opposing stone and count its empty cells. Four stones can already threaten a two-stone finish; two threats alone do not guarantee a win.",
+        detailZh: (peak ? decisionExplanation(context, peak).zh : "")
+          + "训练时先找一段没有对手棋子的六格线路，再数还缺几子。已有四子就可能在下一回合补两子成六；同时也要数对手能用两子封住多少缺口。",
         alternative: peak && peak.reference ? notationOf(state, peak.reference) : ""
       });
     }
 
     if (facts.looseRatio >= 0.4 && facts.decisions >= 8) {
       const loose = mine
-        .filter((decision) => decision.bestAxisScore < SCORE_TWO && decision.reference)
+        .filter((decision) => decision.bestAxisScore < SCORE_TWO && decision.reference
+          && !decision.blockedPlans.length && !decision.threatsFaced && decision.decision > 1)
         .sort((a, b) => a.bestAxisScore - b.bestAxisScore)[0];
       if (loose) {
         list.push({
@@ -858,14 +986,14 @@ function buildRecommendations(context) {
           code: "connect_stones",
           turn: loose.turn,
           notation: loose.notation,
-          title: "Every stone should touch your own shape",
-          titleZh: "每一子都要贴着自己的形状",
-          detail: "A stone with no friendly neighbour is a stone the opponent can ignore. "
-            + loose.notation + " on turn " + loose.turn + " joined nothing; "
-            + notationOf(state, loose.reference) + " would have extended your own group.",
-          detailZh: "没有友邻的落子等于送给对手一步。第 " + loose.turn + " 回合的 "
-            + loose.notation + " 没有连上任何己方棋子；" + notationOf(state, loose.reference)
-            + " 可以延伸你自己的棋形。",
+          title: "Compare the purpose of a disconnected stone",
+          titleZh: "复盘散子时，先看这一子要完成什么",
+          detail: "Turn " + loose.turn + ": " + loose.notation + " joined no friendly run and did not block an identified route to six. "
+            + "The local engine suggests comparing " + notationOf(state, loose.reference)
+            + "; check its attack and defence together with your other stone. This is a heuristic reference, not a proven best move.",
+          detailZh: "第 " + loose.turn + " 回合的 " + loose.notation
+            + " 没有形成连子，也没有切断已识别的连六路线。本地引擎给出的对比落点是 "
+            + notationOf(state, loose.reference) + "；复盘时比较它能连接哪条线、封住哪个缺口，并和同回合另一子一起考虑。这是参考走法，尚未证明是唯一最优解。",
           alternative: notationOf(state, loose.reference)
         });
       }
@@ -887,18 +1015,26 @@ function buildRecommendations(context) {
     }
 
     if (result.endReason === "six_in_a_row" && !safeArray(result.winnerSeats).includes(seat)) {
-      list.push({
-        seat,
-        priority: 6,
-        code: "study_the_loss",
-        title: "Replay the losing turn",
-        titleZh: "复盘输掉的那一手",
-        detail: "The game ended by " + endReasonText(result.endReason, "en")
-          + " on turn " + result.turns + ". Step back two turns and find where the opponent's five appeared.",
-        detailZh: "对局在第 " + result.turns + " 回合以" + endReasonText(result.endReason, "zh")
-          + "结束。往回退两回合，找出对手的五连是哪一步成形的。",
-        alternative: ""
-      });
+      const route = losingRoute(context, seat);
+      if (route) {
+        const text = planText(state, route.plan);
+        list.push({
+          seat,
+          priority: 6,
+          code: "study_the_loss",
+          turn: route.decision.turn,
+          notation: route.decision.notation,
+          title: "Revisit the final chance to break the winning route",
+          titleZh: "回到最后一次能切断制胜线路的回合",
+          detail: "Before " + route.decision.notation + " on turn " + route.decision.turn + ", the opponent's "
+            + text.en + ". Occupying at least one of " + formatCellList(state, route.plan.gaps)
+            + " would break this route; check the other routes before deciding where to use your remaining stone. This does not prove the whole game was savable.",
+          detailZh: "回到第 " + route.decision.turn + " 回合、落 " + route.decision.notation + " 之前：对手的"
+            + text.zh + "。可先占 " + formatCellList(state, route.plan.gaps)
+            + " 中至少一处，破坏这条线；另一子再检查其他进攻线路。这能切断本次制胜路线，但不代表已经证明整盘能守住。",
+          alternative: notationOf(state, route.plan.gaps[0])
+        });
+      }
     }
 
     // A clean game deserves a next step rather than an empty column.
@@ -910,16 +1046,12 @@ function buildRecommendations(context) {
         code: "raise_the_ceiling",
         turn: peak ? peak.turn : null,
         notation: peak ? peak.notation : "",
-        title: "Turn the strongest shape into two threats",
-        titleZh: "把最强的形状做成双威胁",
-        detail: "Nothing in this game needed fixing. The next step is conversion: your peak shape was "
-          + shapeOf(peak ? peak.bestAxisScore : 0).en
-          + (peak ? " at " + peak.notation + " (turn " + peak.turn + ")" : "")
-          + "; pair it with a second line so the opponent cannot answer both.",
-        detailZh: "这盘没有需要纠正的地方。下一步是转化能力：你最好的形状是"
-          + shapeOf(peak ? peak.bestAxisScore : 0).zh
-          + (peak ? "（第 " + peak.turn + " 回合 " + peak.notation + "）" : "")
-          + "；把它和第二条线配起来，对手就挡不住两边。",
+        title: "Review your strongest developing shape",
+        titleZh: "复盘本局最强的进攻形状",
+        detail: (peak ? decisionExplanation(context, peak).en + " " : "")
+          + "Replay both stones of that turn and count how many gaps the opponent could close with two stones. The local analysis has not established that every move was optimal.",
+        detailZh: (peak ? decisionExplanation(context, peak).zh : "")
+          + "训练时一起复盘该回合的两子，数一数对手用两子能封住哪些缺口，再考虑是否能换一个方向继续进攻。本地分析未发现的失误仍可能存在。",
         alternative: ""
       });
     }
@@ -1020,12 +1152,27 @@ function buildSummary(context) {
       return best;
     }, null);
 
+  const loser = seats.find((seat) => winners.length > 0 && !winners.includes(seat));
+  const route = Number.isInteger(loser) ? losingRoute(context, loser) : null;
+  const routeText = route ? planText(state, route.plan) : null;
+  const takeaway = route
+    ? "Review turn " + route.decision.turn + ": before " + route.decision.notation + ", the opponent's "
+      + routeText.en + ". This route remained open until the winning turn."
+    : "";
+  const takeawayZh = route
+    ? "本局先看第 " + route.decision.turn + " 回合：落 " + route.decision.notation + " 前，对手的"
+      + routeText.zh + "。这条路线一直留到对手获胜，是本局最值得回看的防守节点。"
+    : "";
+
   return {
     version: ANALYSIS_VERSION,
+    explanationVersion: 1,
     headline,
     headlineZh,
     resultLine,
     resultLineZh,
+    takeaway,
+    takeawayZh,
     inProgress,
     playerCount: 2,
     boardSize: state.boardSize,

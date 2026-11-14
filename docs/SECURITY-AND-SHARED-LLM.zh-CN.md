@@ -7,12 +7,12 @@
 使用顺序为：**当前账号可用的个人配置 → 服务器指定账号的共享配置 → 本地兜底**。
 
 - 你先在网站注册并登录自己的账号，在「设置 → AI Agent」填入提供方、API 地址、模型和 Key，保存并启用。
-- 在服务器指定你的账号作为共享来源。普通用户可以继续保存、修改、删除自己的个人配置；个人配置优先。
+- 管理员在「设置 → 站点管理」打开「共享 LLM（对手与教练）」，即把自己已保存并启用的模型设为共享来源。来源账号与开关都保存在数据库，重启后保留；普通用户的个人配置仍然优先。
 - 未配置个人 Key 的登录用户，在开局时将 AI 席位引擎选为 `LLM` 即可。`online` 房间仍是人与人联网对战，LLM 对手从对局设置页创建。
 - 浏览器只能看到自己的配置和“共享是否可用”，收不到共享账号的地址、Key、Key 尾号或账单。
-- 共享用于落子，不会自动开放共享 Key 供任意教练聊天或连接测试使用。
+- 共享同时用于 LLM 对手、赛后教练报告和基于报告的追问；仅已登录且有权限访问该对局的用户可以调用。连接测试仍只测试自己的配置，不借用共享 Key。
 
-Web 模式必须明确指定共享账号，不再自动选择最早填写 Key 的访客。指定账号不存在、未启用或 Key 无法解密时，共享会显示不可用。
+Web 模式不会自动选择最早填写 Key 的访客。管理员通过网页开关明确选择自己的账号；旧的 `AI_SHARED_USER_ID` / `AI_SHARED_USER_EMAIL` 配置作为尚未通过网页选择来源时的兼容设置。来源账号不存在、未启用或 Key 无法解密时，共享显示不可用。
 
 ### Linux / systemd
 
@@ -24,7 +24,7 @@ sudo install -m 600 deploy/shared-llm.env.example /etc/thickearth/shared-llm.env
 sudo nano /etc/thickearth/shared-llm.env
 ```
 
-将其中 `AI_SHARED_USER_EMAIL=owner@example.com` 改为你**已经注册并配置好模型的账号邮箱**。也可改用该账号的 `AI_SHARED_USER_ID`；两者同时存在时 ID 优先。文件不需要填写 API Key。
+将 `ADMIN_USER_EMAIL` 设为你已注册的账号邮箱，重启服务授予该账号管理员身份。此后可在网页保存模型并开启共享，无需再配置共享来源环境变量。兼容旧部署时，也可使用 `AI_SHARED_USER_EMAIL` 或 `AI_SHARED_USER_ID` 指定初始来源（ID 优先）；网页明确选择的来源优先。文件不需要填写 API Key。
 
 若原 service 已安装，请更新 service 模板或在现有 `[Service]` 下补充：
 
@@ -54,7 +54,7 @@ npm start
 
 ### 额度与成本归属
 
-共享调用计入提供 Key 的账号的每局、每月上限。每位借用者另受 `AI_SHARED_MAX_CALLS_PER_USER` 限制，默认每月 100 次。每个计费账号最多同时请求 4 次，每位请求者最多同时请求 2 次，可分别用 `AI_MAX_CONCURRENT`、`AI_MAX_CONCURRENT_PER_USER` 调整。
+共享落子计入提供 Key 的账号的每局、每月上限；教练报告与追问计入同一账号的每月额度。每位借用者的共享落子、报告与追问合计另受 `AI_SHARED_MAX_CALLS_PER_USER` 限制，默认每月 100 次。每个计费账号最多同时请求 4 次，每位请求者最多同时请求 2 次，可分别用 `AI_MAX_CONCURRENT`、`AI_MAX_CONCURRENT_PER_USER` 调整。
 
 请求开始前就会持久化预占额度；失败、超时和非法回复也计为一次，避免通过并发或失败重试绕过上限。达到上限、并发限制、提供方故障或格式校验失败时，沿用本地兜底机制。共享不代表无限调用；请在你的账号中设置适合站点规模的总额度。
 
@@ -98,10 +98,10 @@ npm run evaluate:agents
   `AI_SHARED_LLM` 只作为全新数据库的初始值。
 - `GET /api/admin/shared-llm` 返回 `{ enabled, available }`；`available` 表示
   共享源账号存在、已启用且 Key 可解密。
-- `PUT /api/admin/shared-llm` 接受 `{"enabled": true|false}`。两个接口都要求
+- `PUT /api/admin/shared-llm` 接受 `{"enabled": true|false}`；开启时验证管理员自己的模型已就绪，并把该账号记为共享来源。两个接口都要求
   管理员会话，普通账号返回 403，未登录返回 401。
 - 关闭后，没有个人配置的玩家创建 LLM 席位会收到 `AI_NOT_CONFIGURED`；开启后
-  恢复借用。个人配置始终优先，不受开关影响。
+  恢复借用。AI 教练的报告生成和追问遵守同一开关；个人配置始终优先，不受开关影响。
 
 ```ini
 # /etc/thickearth/shared-llm.env
